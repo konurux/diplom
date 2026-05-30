@@ -48,17 +48,36 @@ api_router = APIRouter(prefix="/api")
 # ---------- АБСОЛЮТНЫЙ ПЕРЕХВАТЧИК OPTIONS (ASGI УРОВЕНЬ) ----------
 @app.middleware("http")
 async def catch_options_preflight(request: Request, call_next):
+    origin = request.headers.get("Origin", "")
+    
+    # Проверяем, что запрос идет с твоего фронтенда Vercel или локалки
+    allowed_origin = None
+    if origin:
+        if (
+            "vercel.app" in origin 
+            or "localhost" in origin 
+            or "127.0.0.1" in origin
+        ):
+            allowed_origin = origin
+        else:
+            # Дефолтный домен на случай, если Origin пустой
+            allowed_origin = "https://diplom-kappa-three.vercel.app"
+    else:
+        allowed_origin = "https://diplom-kappa-three.vercel.app"
+
+    # Если это предзапрос OPTIONS
     if request.method == "OPTIONS":
-        response = StarletteResponse(status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = "https://diplom-kappa-three.vercel.app"
+        response = StarletteResponse(status_code=204)
+        response.headers["Access-Control-Allow-Origin"] = allowed_origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Origin"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+        response.headers["Access-Control-Max-Age"] = "86400"
         return response
     
+    # Для основных запросов (GET, POST, PATCH и т.д.)
     response = await call_next(request)
-    # На всякий случай добавляем CORS-заголовки и к обычным ответам (GET, POST)
-    response.headers["Access-Control-Allow-Origin"] = "https://diplom-kappa-three.vercel.app"
+    response.headers["Access-Control-Allow-Origin"] = allowed_origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 
