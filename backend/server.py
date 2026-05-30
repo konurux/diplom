@@ -49,8 +49,7 @@ JWT_ALGORITHM = "HS256"
 
 def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
-
-from starlette.middleware.cors import CORSMiddleware
+ 
 
 # Разрешаем фронтенду ходить на бэкенд
 app.add_middleware(
@@ -144,24 +143,9 @@ def create_refresh_token(user_id: str) -> str:
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie(
-        key="access_token", 
-        value=access, 
-        httponly=True, 
-        secure=True,         # КРИТИЧЕСКИ ВАЖНО: True включает работу по HTTPS (на Render)
-        samesite="none",     # КРИТИЧЕСКИ ВАЖНО: Разрешает кросс-доменные куки (Vercel -> Render)
-        max_age=43200, 
-        path="/"
-    )
-    response.set_cookie(
-        key="refresh_token", 
-        value=refresh, 
-        httponly=True, 
-        secure=True,         # Тоже строго True
-        samesite="none",     # Тоже строго "none"
-        max_age=1209600, 
-        path="/"
-    )
+    response.set_cookie("access_token", access, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
+    response.set_cookie("refresh_token", refresh, httponly=True, secure=False, samesite="lax", max_age=1209600, path="/")
+
 
 def clear_auth_cookies(response: Response):
     response.delete_cookie("access_token", path="/")
@@ -833,16 +817,18 @@ async def root():
     return {"app": "Dezi Market API", "status": "ok"}
 
 
-# ---------- App wiring ----------
-app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_origin_regex=".*",
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "https://diplom-kappa-three.vercel.app",  # Твой фронтенд на Vercel
+        "http://localhost:3000",                  # Локальный React (если нужен)
+        "http://127.0.0.1:3000"
+    ],
+    allow_credentials=True,                      # Разрешаем куки
+    allow_methods=["*"],                         # Методы (GET, POST и т.д.) можно оставить со звездочкой
+    allow_headers=["*"],                         # Заголовки тоже можно со звездочкой
 )
+app.include_router(api_router)
 
 
 @app.on_event("startup")
