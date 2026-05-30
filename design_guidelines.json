@@ -1,0 +1,141 @@
+{
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast) + Crystal Glassmorphism",
+  "domain": "Creative E-commerce / Digital Marketplace",
+  "typography": {
+    "headings": {
+      "family": "Outfit",
+      "import_url": "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap",
+      "tracking": "tracking-tight",
+      "scale": "text-4xl sm:text-5xl lg:text-6xl"
+    },
+    "body": {
+      "family": "Manrope",
+      "import_url": "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&display=swap",
+      "scale": "text-base"
+    }
+  },
+  "colors": {
+    "light": {
+      "background": "#F7F7F8",
+      "surface": "#FFFFFF",
+      "surface_glass": "bg-white/70 backdrop-blur-xl border-white/40",
+      "text_primary": "#111111",
+      "text_secondary": "#737373",
+      "border": "#E5E5E5",
+      "primary": "#111111",
+      "primary_foreground": "#FFFFFF"
+    },
+    "dark": {
+      "background": "#0A0A0A",
+      "surface": "#141414",
+      "surface_glass": "bg-black/60 backdrop-blur-xl border-white/10",
+      "text_primary": "#FFFFFF",
+      "text_secondary": "#A3A3A3",
+      "border": "#262626",
+      "primary": "#FFFFFF",
+      "primary_foreground": "#0A0A0A"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous Spacing, Optical Alignment over Geometrical. Lots of negative space.",
+    "container": "max-w-[1440px] mx-auto px-6 md:px-8",
+    "masonry_grid": "columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6",
+    "card_padding": "p-0 for image, p-4 or p-5 for content inside card",
+    "section_spacing": "py-20 md:py-32"
+  },
+  "components": {
+    "header": {
+      "style": "Sticky top, Crystal Glassmorphism (bg-white/70 backdrop-blur-xl border-b border-white/40 in light mode, dark mode equivalent), z-50",
+      "elements": "Logo, Large Search Bar (rounded-full bg-gray-100 dark:bg-gray-800), Navigation (Explore, Categories), User Avatar"
+    },
+    "hero": {
+      "style": "Massive text, highly emotional, lots of breathing room, centered layout. Background can use subtle mesh gradient or abstract 3D elements.",
+      "title": "text-5xl md:text-6xl+ tracking-tighter font-semibold"
+    },
+    "product_card": {
+      "style": "Rounded-2xl overflow-hidden cursor-pointer, soft shadow-sm, minimal border. Break-inside-avoid for masonry.",
+      "hover_state": "Image scales up slightly (group-hover:scale-105 transition-transform duration-500). Glassmorphic overlay appears with Like/Save buttons. Author details visible at bottom.",
+      "shadow": "shadow-[0_8px_30px_rgb(0,0,0,0.04)]"
+    },
+    "sidebar_filters": {
+      "style": "Sticky on desktop, clean checklist or pill-shaped toggles. Rounded-full chips for active categories."
+    },
+    "buttons": {
+      "style": "Rounded-full for main CTAs (adds friendly community vibe), smooth hover translations (-translate-y-0.5), subtle shadow."
+    }
+  },
+  "media": {
+    "hero_backgrounds": [
+      {
+        "url": "",
+        "description": "Abstract 3D glass shape, use for hero background or large aesthetic accents"
+      }
+    ],
+    "product_thumbnails": [
+      {
+        "url": "",
+        "category": "UI Kit"
+      },
+      {
+        "url": "",
+        "category": "Web Template"
+      },
+      {
+        "url": "",
+        "category": "Icons"
+      },
+      {
+        "url": "",
+        "category": "Mockup"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1644792863360-40fa85ea52e7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NjZ8MHwxfHNlYXJjaHw0fHxibGFuayUyMG1hY2Jvb2slMjBwcm8lMjBzY3JlZW4lMjBtb2NrdXAlMjBkZXNrfGVufDB8fHx8MTc4MDEyOTIwNnww&ixlib=rb-4.1.0&q=85",
+        "category": "Mockup Desktop"
+      },
+      {
+        "url": "https://images.pexels.com/photos/5083403/pexels-photo-5083403.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "category": "Mockup"
+      }
+    ],
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1649123245135-4db6ead931b5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwzfHxwb3J0cmFpdCUyMHByb2Zlc3Npb25hbCUyMGNyZWF0aXZlJTIwZGVzaWduZXIlMjBhdmF0YXJ8ZW58MHx8fHwxNzgwMTI5MjA2fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Creator Avatar 1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwxfHxwb3J0cmFpdCUyMHByb2Zlc3Npb25hbCUyMGNyZWF0aXZlJTIwZGVzaWduZXIlMjBhdmF0YXJ8ZW58MHx8fHwxNzgwMTI5MjA2fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Creator Avatar 2"
+      },
+      {
+        "url": "https://images.pexels.com/photos/30426363/pexels-photo-30426363.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Creator Avatar 3"
+      }
+    ]
+  },
+  "testing": {
+    "instructions": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case format.",
+    "examples": [
+      "data-testid='explore-button'",
+      "data-testid='search-input'",
+      "data-testid='filter-category-uikit'",
+      "data-testid='product-card-123'",
+      "data-testid='theme-toggle-button'"
+    ]
+  },
+  "tech_stack": {
+    "framework": "React (.js files)",
+    "styling": "Tailwind CSS",
+    "icons": "lucide-react (default) or @phosphor-icons/react for design tool vibes"
+  },
+  "instructions_to_main_agent": [
+    "Use pure HTML/Tailwind for complex marketing grids, and Shadcn UI components for functional areas (forms, dialogs, selects).",
+    "Use CSS columns (columns-2 md:columns-3 lg:columns-4 gap-6) for the masonry grid, avoiding complex JS libraries unless necessary. Add 'break-inside-avoid' to children items.",
+    "Hover states on product cards MUST be expressive: overlay a dark transparent gradient, slide up the 'Save' and 'Like' buttons.",
+    "CRITICAL: The UI is in RUSSIAN. Make sure all static text is translated to Russian (e.g., 'Поиск', 'Категории', 'Избранное', 'В тренде').",
+    "Ensure dark mode is perfectly toggled using Tailwind 'dark:' variants.",
+    "Use rounded-2xl or rounded-3xl extensively on images and cards to mimic Dribbble/Behance smooth aesthetics.",
+    "Implement glassmorphism according to guidelines: bright and saturated with subtle white/gray borders to maintain boundaries.",
+    "Provide functionality to switch themes, upload designs, moderate templates, and view personal accounts per problem statement."
+  ]
+}
