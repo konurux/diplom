@@ -338,4 +338,460 @@ async def me(user: dict = Depends(get_current_user)):
 
 @api_router.post("/auth/refresh")
 async def refresh_token(request: Request, response: Response):
-    token
+    token = request.cookies.get("refresh_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Нет refresh токена")
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Неверный токен")
+        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        if not user:
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
+        access = create_access_token(str(user["_id"]), user["email"], user.get("role", "user"))
+        response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
+        return {"ok": True}
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Недействительный токен")
+
+# ---------- Profile ----------
+@api_router.patch("/users/me")
+async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not update:
+        return user
+    await db.users.update_one({"_id": ObjectId(user["id"])}, {"$set": update})
+    fresh = await db.users.find_one({"_id": ObjectId(user["id"])})
+    return serialize_user(fresh)
+
+# ---------- File Upload ----------
+@api_router.post("/upload")
+async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Допустимы только изображения")
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "png"
+    if ext not in ("png", "jpg", "jpeg", "webp", "gif"):
+        ext = "png"
+    path = f"{APP_NAME}/uploads/{user['id']}/{uuid.uuid4()}.{ext}"
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Файл больше 10MB")
+    result = put_object(path, data, file.content_type)
+    await db.files.insert_one({
+        "storage_path": result["path"],
+        "owner_id": user["id"],
+        "size": result.get("size", len(data)),
+        "content_type": file.content_type,
+        "original_filename": file.filename,
+        "is_deleted": False,
+        "created_at": now_iso(),
+    })
+    return {"path": result["path"], "url": f"/api/files/{result['path']}"}
+
+@api_router.get("/files/{path:path}")
+async def get_file(path: str):
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not record:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    data, ctype = get_object(path)
+    return StreamingResponse(io.BytesIO(data), media_type=record.get("content_type", ctype))
+
+# ---------- Designs ----------
+@api_router.post("/designs")
+async def create_design(body: DesignCreate, user: dict = Depends(get_current_user)):
+    role = user.get("role", "user")
+    status = "approved" if role in ("admin", "moderator") else "pending"
+    doc = {
+        "title": body.title.strip(),
+        "description": body.description.strip(),
+        "category": body.category,
+        "styles": [s for s in body.styles if s][:5] or ["modern"],
+        "external_url": body.external_url.strip(),
+        "price": 0.0 if body.is_free else max(body.price, 0.0),
+        "is_free": body.is_free,
+        "tags": [t.strip() for t in body.tags if t.strip()][:12],
+        "images": body.images[:8],
+        "status": status,
+        "author_id": user["id"],
+        "likes_count": 0,
+        "downloads_count": 0,
+        "views_count": 0,
+        "rating": 0.0,
+        "rating_count": 0,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    result = await db.designs.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return await serialize_design(doc, user)
+
+@api_router.get("/designs")
+async def list_designs(
+    request: Request,
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    style: Optional[str] = None,
+    price: Optional[str] = None,
+    sort: str = "popular",
+    status: str = "approved",
+    author_id: Optional[str] = None,
+    limit: int = 60,
+    skip: int = 0,
+):
+    current = await get_optional_user(request)
+    query: dict = {}
+    if status == "approved":
+        query["status"] = "approved"
+    else:
+        if not current or current.get("role") not in ("admin", "moderator"):
+            query["status"] = "approved"
+        else:
+            query["status"] = status
+    if q:
+        query["$or"] = [
+            {"title": {"$regex": q, "$options": "i"}},
+            {"description": {"$regex": q, "$options": "i"}},
+            {"tags": {"$elemMatch": {"$regex": q, "$options": "i"}}},
+        ]
+    if category and category != "all":
+        query["category"] = category
+    if style and style != "all":
+        query["styles"] = style
+    if price == "free":
+        query["is_free"] = True
+    elif price == "paid":
+        query["is_free"] = False
+    if author_id:
+        query["author_id"] = author_id
+
+    sort_map = {
+        "popular": [("likes_count", -1), ("views_count", -1)],
+        "newest": [("created_at", -1)],
+        "rating": [("rating", -1), ("rating_count", -1)],
+        "downloads": [("downloads_count", -1)],
+    }
+    sort_spec = sort_map.get(sort, sort_map["popular"])
+    cursor = db.designs.find(query).sort(sort_spec).skip(skip).limit(min(limit, 100))
+    designs = []
+    async for d in cursor:
+        designs.append(await serialize_design(d, current))
+    return designs
+
+@api_router.get("/designs/trending")
+async def trending(request: Request):
+    current = await get_optional_user(request)
+    cursor = db.designs.find({"status": "approved"}).sort([("likes_count", -1), ("views_count", -1)]).limit(12)
+    return [await serialize_design(d, current) async for d in cursor]
+
+@api_router.get("/designs/{design_id}")
+async def get_design(design_id: str, request: Request):
+    current = await get_optional_user(request)
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d:
+        raise HTTPException(status_code=404, detail="Дизайн не найден")
+    if d.get("status") != "approved":
+        if not current or (current.get("role") not in ("admin", "moderator") and current["id"] != d["author_id"]):
+            raise HTTPException(status_code=403, detail="Нет доступа")
+    await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"views_count": 1}})
+    d["views_count"] = d.get("views_count", 0) + 1
+    return await serialize_design(d, current)
+
+@api_router.patch("/designs/{design_id}")
+async def update_design(design_id: str, body: DesignUpdate, user: dict = Depends(get_current_user)):
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d:
+        raise HTTPException(status_code=404, detail="Дизайн не найден")
+    is_owner = d["author_id"] == user["id"]
+    is_staff = user.get("role") in ("admin", "moderator")
+    if not (is_owner or is_staff):
+        raise HTTPException(status_code=403, detail="Нет прав")
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "status" in update and not is_staff:
+        del update["status"]
+    if "is_free" in update and update["is_free"]:
+        update["price"] = 0.0
+    update["updated_at"] = now_iso()
+    if not is_staff and is_owner:
+        update.setdefault("status", "pending")
+    await db.designs.update_one({"_id": d["_id"]}, {"$set": update})
+    fresh = await db.designs.find_one({"_id": d["_id"]})
+    return await serialize_design(fresh, user)
+
+@api_router.delete("/designs/{design_id}")
+async def delete_design(design_id: str, user: dict = Depends(get_current_user)):
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d:
+        raise HTTPException(status_code=404, detail="Дизайн не найден")
+    if d["author_id"] != user["id"] and user.get("role") not in ("admin", "moderator"):
+        raise HTTPException(status_code=403, detail="Нет прав")
+    await db.designs.delete_one({"_id": d["_id"]})
+    await db.comments.delete_many({"design_id": design_id})
+    await db.favorites.delete_many({"design_id": design_id})
+    await db.likes.delete_many({"design_id": design_id})
+    return {"ok": True}
+
+@api_router.post("/designs/{design_id}/moderate")
+async def moderate_design(
+    design_id: str,
+    action: str = Query(..., description="approve|reject"),
+    user: dict = Depends(require_roles("admin", "moderator")),
+):
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d:
+        raise HTTPException(status_code=404, detail="Дизайн не найден")
+    new_status = "approved" if action == "approve" else "rejected"
+    await db.designs.update_one({"_id": d["_id"]}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    fresh = await db.designs.find_one({"_id": d["_id"]})
+    return await serialize_design(fresh, user)
+
+# ---------- Likes / Favorites ----------
+@api_router.post("/designs/{design_id}/like")
+async def toggle_like(design_id: str, user: dict = Depends(get_current_user)):
+    existing = await db.likes.find_one({"user_id": user["id"], "design_id": design_id})
+    if existing:
+        await db.likes.delete_one({"_id": existing["_id"]})
+        await db.designs.update_one({"_id": ObjectId(design_id)}, {"$inc": {"likes_count": -1}})
+        return {"liked": False}
+    await db.likes.insert_one({"user_id": user["id"], "design_id": design_id, "created_at": now_iso()})
+    await db.designs.update_one({"_id": ObjectId(design_id)}, {"$inc": {"likes_count": 1}})
+    return {"liked": True}
+
+@api_router.post("/designs/{design_id}/favorite")
+async def toggle_favorite(design_id: str, user: dict = Depends(get_current_user)):
+    existing = await db.favorites.find_one({"user_id": user["id"], "design_id": design_id})
+    if existing:
+        await db.favorites.delete_one({"_id": existing["_id"]})
+        return {"saved": False}
+    await db.favorites.insert_one({"user_id": user["id"], "design_id": design_id, "created_at": now_iso()})
+    return {"saved": True}
+
+@api_router.get("/favorites")
+async def list_favorites(user: dict = Depends(get_current_user)):
+    favs = await db.favorites.find({"user_id": user["id"]}).sort("created_at", -1).to_list(500)
+    result = []
+    for f in favs:
+        try:
+            d = await db.designs.find_one({"_id": ObjectId(f["design_id"])})
+            if d:
+                result.append(await serialize_design(d, user))
+        except Exception:
+            continue
+    return result
+
+# ---------- Download / Purchase ----------
+@api_router.post("/designs/{design_id}/download")
+async def download_design(design_id: str, user: dict = Depends(get_current_user)):
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d or d.get("status") != "approved":
+        raise HTTPException(status_code=404, detail="Дизайн недоступен")
+    if not d.get("is_free", True):
+        purchased = await db.purchases.find_one({"user_id": user["id"], "design_id": design_id, "status": "completed"})
+        if not purchased:
+            raise HTTPException(status_code=402, detail="Требуется покупка")
+    await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"downloads_count": 1}})
+    return {"ok": True, "files": d.get("images", [])}
+
+@api_router.post("/designs/{design_id}/purchase")
+async def purchase_design(design_id: str, user: dict = Depends(get_current_user)):
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d or d.get("status") != "approved":
+        raise HTTPException(status_code=404, detail="Дизайн недоступен")
+    if d.get("is_free", True):
+        return {"ok": True, "status": "free"}
+    existing = await db.purchases.find_one({"user_id": user["id"], "design_id": design_id, "status": "completed"})
+    if existing:
+        return {"ok": True, "status": "already_purchased"}
+    await db.purchases.insert_one({
+        "user_id": user["id"],
+        "design_id": design_id,
+        "amount": d.get("price", 0.0),
+        "status": "completed",
+        "created_at": now_iso(),
+    })
+    return {"ok": True, "status": "completed"}
+
+@api_router.get("/purchases")
+async def list_purchases(user: dict = Depends(get_current_user)):
+    items = await db.purchases.find({"user_id": user["id"]}).sort("created_at", -1).to_list(500)
+    result = []
+    for p in items:
+        try:
+            d = await db.designs.find_one({"_id": ObjectId(p["design_id"])})
+            if d:
+                serialized = await serialize_design(d, user)
+                serialized["purchase"] = {
+                    "amount": p.get("amount", 0),
+                    "status": p.get("status"),
+                    "created_at": p.get("created_at"),
+                }
+                result.append(serialized)
+        except Exception:
+            continue
+    return result
+
+# ---------- Comments ----------
+@api_router.get("/designs/{design_id}/comments")
+async def list_comments(design_id: str):
+    cursor = db.comments.find({"design_id": design_id}).sort("created_at", -1).limit(200)
+    items = []
+    async for c in cursor:
+        author = await db.users.find_one({"_id": ObjectId(c["user_id"])}) if c.get("user_id") else None
+        items.append({
+            "id": str(c["_id"]),
+            "text": c["text"],
+            "created_at": c.get("created_at"),
+            "author": {
+                "id": str(author["_id"]) if author else None,
+                "name": author.get("name") if author else "Аноним",
+                "avatar_url": author.get("avatar_url") if author else None,
+            },
+        })
+    return items
+
+@api_router.post("/designs/{design_id}/comments")
+async def create_comment(design_id: str, body: CommentCreate, user: dict = Depends(get_current_user)):
+    try:
+        d = await db.designs.find_one({"_id": ObjectId(design_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not d:
+        raise HTTPException(status_code=404, detail="Дизайн не найден")
+    doc = {
+        "design_id": design_id,
+        "user_id": user["id"],
+        "text": body.text.strip(),
+        "created_at": now_iso(),
+    }
+    res = await db.comments.insert_one(doc)
+    return {
+        "id": str(res.inserted_id),
+        "text": doc["text"],
+        "created_at": doc["created_at"],
+        "author": {"id": user["id"], "name": user.get("name"), "avatar_url": user.get("avatar_url")},
+    }
+
+@api_router.delete("/comments/{comment_id}")
+async def delete_comment(comment_id: str, user: dict = Depends(get_current_user)):
+    try:
+        c = await db.comments.find_one({"_id": ObjectId(comment_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not c:
+        raise HTTPException(status_code=404, detail="Комментарий не найден")
+    if c["user_id"] != user["id"] and user.get("role") not in ("admin", "moderator"):
+        raise HTTPException(status_code=403, detail="Нет прав")
+    await db.comments.delete_one({"_id": c["_id"]})
+    return {"ok": True}
+
+# ---------- Admin: users management ----------
+@api_router.get("/admin/users")
+async def admin_users(user: dict = Depends(require_roles("admin"))):
+    users = await db.users.find({}).sort("created_at", -1).to_list(500)
+    return [serialize_user(u) for u in users]
+
+@api_router.patch("/admin/users/{user_id}/role")
+async def admin_set_role(user_id: str, role: str = Query(..., description="user|moderator|admin"), _user: dict = Depends(require_roles("admin"))):
+    if role not in ("user", "moderator", "admin"):
+        raise HTTPException(status_code=400, detail="Неверная роль")
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"role": role}})
+    fresh = await db.users.find_one({"_id": ObjectId(user_id)})
+    return serialize_user(fresh)
+
+@api_router.post("/admin/users")
+async def admin_create_user(body: AdminCreateUserBody, _user: dict = Depends(require_roles("admin"))):
+    if body.role not in ("user", "moderator", "admin"):
+        raise HTTPException(status_code=400, detail="Неверная роль")
+    email = body.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
+    doc = {
+        "email": email,
+        "name": body.name.strip(),
+        "password_hash": hash_password(body.password),
+        "role": body.role,
+        "avatar_url": None,
+        "bio": None,
+        "created_at": now_iso(),
+    }
+    result = await db.users.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return serialize_user(doc)
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, current: dict = Depends(require_roles("admin"))):
+    if user_id == current["id"]:
+        raise HTTPException(status_code=400, detail="Нельзя удалить самого себя")
+    try:
+        target = await db.users.find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not target:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    await db.users.delete_one({"_id": ObjectId(user_id)})
+    await db.designs.delete_many({"author_id": user_id})
+    await db.comments.delete_many({"user_id": user_id})
+    await db.favorites.delete_many({"user_id": user_id})
+    await db.likes.delete_many({"user_id": user_id})
+    await db.purchases.delete_many({"user_id": user_id})
+    return {"ok": True}
+
+# ---------- Stats ----------
+@api_router.get("/stats")
+async def stats():
+    return {
+        "designs": await db.designs.count_documents({"status": "approved"}),
+        "pending": await db.designs.count_documents({"status": "pending"}),
+        "users": await db.users.count_documents({}),
+    }
+
+@api_router.get("/")
+async def root():
+    return {"app": "Dezi Market API", "status": "ok"}
+
+# ---------- Роутер подключаем в самом конце файла ----------
+app.include_router(api_router)
+
+@app.on_event("startup")
+async def startup():
+    # Indexes
+    await db.users.create_index("email", unique=True)
+    await db.designs.create_index([("status", 1), ("created_at", -1)])
+    await db.designs.create_index([("author_id", 1)])
+    await db.designs.create_index([("category", 1), ("styles", 1)])
+    await db.favorites.create_index([("user_id", 1), ("design_id", 1)], unique=True)
+    await db.likes.create_index([("user_id", 1), ("design_id", 1)], unique=True)
+    await db.comments.create_index([("design_id", 1), ("created_at", -1)])
+
+    # Seed admin
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@dezi.ru")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin12345")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "email": admin_email,
+            "name": "Администратор",
+            "password_hash": hash_password(admin_password),
+            "role": "admin",
+            "avatar_url": None,
+            "bio": "Главный администратор платформы",
+            "created_at": now_iso(),
+        })
+        logger.info("Admin seeded successfully.")
