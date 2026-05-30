@@ -144,9 +144,24 @@ def create_refresh_token(user_id: str) -> str:
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie("access_token", access, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=False, samesite="lax", max_age=1209600, path="/")
-
+    response.set_cookie(
+        key="access_token", 
+        value=access, 
+        httponly=True, 
+        secure=True,         # КРИТИЧЕСКИ ВАЖНО: True включает работу по HTTPS (на Render)
+        samesite="none",     # КРИТИЧЕСКИ ВАЖНО: Разрешает кросс-доменные куки (Vercel -> Render)
+        max_age=43200, 
+        path="/"
+    )
+    response.set_cookie(
+        key="refresh_token", 
+        value=refresh, 
+        httponly=True, 
+        secure=True,         # Тоже строго True
+        samesite="none",     # Тоже строго "none"
+        max_age=1209600, 
+        path="/"
+    )
 
 def clear_auth_cookies(response: Response):
     response.delete_cookie("access_token", path="/")
