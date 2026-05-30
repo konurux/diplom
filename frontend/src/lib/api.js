@@ -4,7 +4,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
 export const api = axios.create({
-  baseURL: "https://diplom-sn76.onrender.com",
+  baseURL: "https://diplom-sn76.onrender.com/api",
   withCredentials: true,
 });
 
