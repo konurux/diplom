@@ -51,19 +51,6 @@ def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
  
 
-# Разрешаем фронтенду ходить на бэкенд
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://diplom-kappa-three.vercel.app",  # Твой сайт на Vercel
-        "http://localhost:3000",                  # Локальный React
-        "http://127.0.0.1:3000"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 STORAGE_URL = ""
 APP_NAME = os.environ.get("APP_NAME", "dezi-market")
 storage_key_holder = {"key": None}
