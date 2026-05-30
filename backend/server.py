@@ -45,6 +45,20 @@ db = client[os.environ["DB_NAME"]]
 app = FastAPI(title="Dezi Market API")
 api_router = APIRouter(prefix="/api")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://diplom-kappa-three.vercel.app",  # Твой фронтенд на Vercel
+        "http://localhost:3000",                  # Локальный React (если нужен)
+        "http://127.0.0.1:3000"
+    ],
+    allow_credentials=True,                      # Разрешаем куки
+    allow_methods=["*"],                         # Методы (GET, POST и т.д.) можно оставить со звездочкой
+    allow_headers=["*"],                         # Заголовки тоже можно со звездочкой
+)
+app.include_router(api_router)
+
+
 JWT_ALGORITHM = "HS256"
 
 def get_jwt_secret() -> str:
@@ -802,20 +816,6 @@ async def stats():
 @api_router.get("/")
 async def root():
     return {"app": "Dezi Market API", "status": "ok"}
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://diplom-kappa-three.vercel.app",  # Твой фронтенд на Vercel
-        "http://localhost:3000",                  # Локальный React (если нужен)
-        "http://127.0.0.1:3000"
-    ],
-    allow_credentials=True,                      # Разрешаем куки
-    allow_methods=["*"],                         # Методы (GET, POST и т.д.) можно оставить со звездочкой
-    allow_headers=["*"],                         # Заголовки тоже можно со звездочкой
-)
-app.include_router(api_router)
 
 
 @app.on_event("startup")
