@@ -112,8 +112,10 @@ export default function Profile() {
           ) : (
             <div className="space-y-4">
               {purchases.map((p) => (
-                <div key={p.id} className="flex gap-4 items-center p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800" data-testid={`purchase-${p.id}`}>
-                  <img src={p.images?.[0] ? fileUrl(p.images[0]) : ""} alt="" className="w-20 h-20 object-cover rounded-xl bg-neutral-100" />
+                <div key={p.id} className="flex gap-4 items-center p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 opacity-100 hover:opacity-100 transition-none">
+                  <img src={p.images?.[0] ? fileUrl(p.images[0]) : ""} 
+                  alt="" 
+                  className="w-20 h-20 min-w-[80px] object-cover rounded-xl bg-neutral-100 block opacity-100"/>
                   <div className="flex-1">
                     <div className="font-display font-semibold">{p.title}</div>
                     <div className="text-sm text-neutral-500">{new Date(p.purchase?.created_at).toLocaleDateString("ru-RU")}</div>
