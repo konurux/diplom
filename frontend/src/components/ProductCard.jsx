@@ -75,7 +75,7 @@ export default function ProductCard({ design, onChange }) {
           loading="lazy"
           onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/0 opacity-0 group-hover/card:opacity-100 transition-opacity duration-300" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/0 opacity-0 group-hover/card:opacity-100 transition-opacity duration-300 pointer-events-none" />
 
         <div className="absolute top-2 right-2 flex gap-1.5">
           <button
@@ -88,7 +88,7 @@ export default function ProductCard({ design, onChange }) {
           </button>
         </div>
 
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover/card:opacity-100 transition-all duration-300 translate-y-2 group-hover/card:translate-y-0">
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover/card:opacity-100 transition-all duration-300 translate-y-2 group-hover/card:translate-y-0 z-10">
           <button
             onClick={handleLike}
             data-testid={`like-button-${design.id}`}
