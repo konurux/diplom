@@ -93,27 +93,30 @@ storage_key_holder = {"key": None}
 def init_storage() -> Optional[str]:
     return None
 
+import logging
+
 def put_object(path: str, data: bytes, content_type: str) -> dict:
     key = init_storage()
     if not key:
+        logging.error("init_storage() вернул None - сервис хранения недоступен")
         raise HTTPException(status_code=500, detail="Хранилище недоступно")
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data,
-        timeout=120,
-    )
-    if resp.status_code == 403:
-        storage_key_holder["key"] = None
-        key = init_storage()
+    
+    try:
         resp = requests.put(
             f"{STORAGE_URL}/objects/{path}",
             headers={"X-Storage-Key": key, "Content-Type": content_type},
             data=data,
             timeout=120,
         )
-    resp.raise_for_status()
-    return resp.json()
+        # Логируем ответ сервера, если он не 200
+        if resp.status_code != 200:
+            logging.error(f"Ошибка сервера хранения: {resp.status_code} - {resp.text}")
+        
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logging.error(f"Критическая ошибка при загрузке в хранилище: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка связи с хранилищем: {str(e)}")
 
 def get_object(path: str):
     key = init_storage()
