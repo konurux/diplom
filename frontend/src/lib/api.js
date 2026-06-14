@@ -23,5 +23,9 @@ export function formatApiErrorDetail(detail) {
 export function fileUrl(path) {
   if (!path) return "";
   if (path.startsWith("http")) return path;
+  
+  // Вставьте сюда полный адрес вашего бэкенда на Render
+  const API = "https://diplom-sn76.onrender.com/api"; 
+  
   return `${API}/files/${path}`;
 }
