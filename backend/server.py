@@ -94,14 +94,14 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 # Убедитесь, что объект db у вас импортирован или доступен в этом файле
 # from your_database_module import db 
 
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+
 async def put_object(path: str, data: bytes, content_type: str) -> dict:
-    # Инициализируем хранилище GridFS прямо здесь
     fs = AsyncIOMotorGridFSBucket(db)
-    
-    # Сохраняем файл в MongoDB
+    # Используем BytesIO, чтобы превратить байты в поток для GridFS
     await fs.upload_from_stream(
         path, 
-        data, 
+        io.BytesIO(data), 
         metadata={"contentType": content_type}
     )
     return {"path": path, "size": len(data)}
@@ -398,10 +398,13 @@ async def get_file(path: str):
     if not record:
         raise HTTPException(status_code=404, detail="Файл не найден")
     
-    # ОБЯЗАТЕЛЬНО добавьте await здесь:
-    data, ctype = await get_object(path) 
+    data, ctype = await get_object(path)
     
-    return StreamingResponse(io.BytesIO(data), media_type=record.get("content_type", ctype))
+    # Добавляем заголовки для браузера
+    return StreamingResponse(
+        io.BytesIO(data), 
+        media_type=ctype or "image/jpeg"
+    )
 
 # ---------- Designs ----------
 @api_router.post("/designs")
