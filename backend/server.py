@@ -86,51 +86,34 @@ JWT_ALGORITHM = "HS256"
 def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
-STORAGE_URL = ""
-APP_NAME = os.environ.get("APP_NAME", "dezi-market")
-storage_key_holder = {"key": None}
-
-def init_storage() -> Optional[str]:
-    return None
-
 import logging
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
-def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    if not key:
-        logging.error("init_storage() вернул None - сервис хранения недоступен")
-        raise HTTPException(status_code=500, detail="Хранилище недоступно")
+# Убедитесь, что объект db у вас импортирован или доступен в этом файле
+# from your_database_module import db 
+
+async def put_object(path: str, data: bytes, content_type: str) -> dict:
+    # Инициализируем хранилище GridFS прямо здесь
+    fs = AsyncIOMotorGridFSBucket(db)
     
-    try:
-        resp = requests.put(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type},
-            data=data,
-            timeout=120,
-        )
-        # Логируем ответ сервера, если он не 200
-        if resp.status_code != 200:
-            logging.error(f"Ошибка сервера хранения: {resp.status_code} - {resp.text}")
-        
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        logging.error(f"Критическая ошибка при загрузке в хранилище: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка связи с хранилищем: {str(e)}")
+    # Сохраняем файл в MongoDB
+    await fs.upload_from_stream(
+        path, 
+        data, 
+        metadata={"contentType": content_type}
+    )
+    return {"path": path, "size": len(data)}
 
-def get_object(path: str):
-    key = init_storage()
-    if not key:
-        raise HTTPException(status_code=500, detail="Хранилище недоступно")
-    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    if resp.status_code == 403:
-        storage_key_holder["key"] = None
-        key = init_storage()
-        resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    if resp.status_code == 404:
-        raise HTTPException(status_code=404, detail="Файл не найден")
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+async def get_object(path: str):
+    # Инициализируем хранилище GridFS прямо здесь
+    fs = AsyncIOMotorGridFSBucket(db)
+    
+    # Достаем файл из MongoDB по его имени (path)
+    grid_out = await fs.open_download_stream_by_name(path)
+    data = await grid_out.read()
+    content_type = grid_out.metadata.get("contentType", "image/jpeg")
+    return data, content_type
+
 
 # ---------- Password & JWT ----------
 def hash_password(password: str) -> str:
@@ -398,7 +381,7 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     data = await file.read()
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Файл больше 10MB")
-    result = put_object(path, data, file.content_type)
+    result = await put_object(path, data, file.content_type)
     await db.files.insert_one({
         "storage_path": result["path"],
         "owner_id": user["id"],
