@@ -98,11 +98,11 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 async def put_object(path: str, data: bytes, content_type: str) -> dict:
     fs = AsyncIOMotorGridFSBucket(db)
-    # Используем BytesIO, чтобы превратить байты в поток для GridFS
+    # Явно передаем метаданные при создании потока
     await fs.upload_from_stream(
         path, 
         io.BytesIO(data), 
-        metadata={"contentType": content_type}
+        metadata={"contentType": content_type} # Убедитесь, что этот ключ совпадает с тем, что вы читаете
     )
     return {"path": path, "size": len(data)}
 
@@ -393,18 +393,21 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     return {"path": result["path"], "url": f"/api/files/{result['path']}"}
 
 @api_router.get("/files/{path:path}")
+@api_router.get("/files/{path:path}")
 async def get_file(path: str):
-    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
-    if not record:
+    fs = AsyncIOMotorGridFSBucket(db)
+    try:
+        grid_out = await fs.open_download_stream_by_name(path)
+        data = await grid_out.read()
+        
+        # Добавляем fallback: если в БД нет contentType, по умолчанию считаем, что это image/jpeg
+        ctype = "image/jpeg"
+        if grid_out.metadata and "contentType" in grid_out.metadata:
+            ctype = grid_out.metadata["contentType"]
+            
+        return Response(content=data, media_type=ctype)
+    except Exception:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    
-    data, ctype = await get_object(path)
-    
-    # Добавляем заголовки для браузера
-    return StreamingResponse(
-        io.BytesIO(data), 
-        media_type=ctype or "image/jpeg"
-    )
 
 # ---------- Designs ----------
 @api_router.post("/designs")
