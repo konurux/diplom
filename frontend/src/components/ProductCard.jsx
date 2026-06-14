@@ -65,7 +65,7 @@ export default function ProductCard({ design, onChange }) {
     <Link
       to={`/design/${design.id}`}
       data-testid={`product-card-${design.id}`}
-      className="group block card-hover relative overflow-hidden rounded-xl bg-white dark:bg-neutral-900 soft-shadow border border-neutral-100 dark:border-neutral-800"
+      className="group/card block card-hover relative overflow-hidden rounded-xl bg-white dark:bg-neutral-900 soft-shadow border border-neutral-100 dark:border-neutral-800"
     >
       <div className="relative overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         <img
@@ -75,20 +75,20 @@ export default function ProductCard({ design, onChange }) {
           loading="lazy"
           onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/0 opacity-0 group-hover/card:opacity-100 transition-opacity duration-300" />
 
         <div className="absolute top-2 right-2 flex gap-1.5">
           <button
             onClick={handleSave}
             data-testid={`save-button-${design.id}`}
             aria-label="Сохранить"
-            className="w-8 h-8 grid place-items-center rounded-full glass-light hover:bg-white dark:hover:bg-black transition-colors opacity-0 group-hover:opacity-100"
+            className="w-8 h-8 grid place-items-center rounded-full glass-light hover:bg-white dark:hover:bg-black transition-colors opacity-0 group-hover/card:opacity-100"
           >
             <Bookmark className={`w-3.5 h-3.5 ${saved ? "fill-current text-orange-500" : ""}`} />
           </button>
         </div>
 
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover/card:opacity-100 transition-all duration-300 translate-y-2 group-hover/card:translate-y-0">
           <button
             onClick={handleLike}
             data-testid={`like-button-${design.id}`}
@@ -115,7 +115,7 @@ export default function ProductCard({ design, onChange }) {
       </div>
 
       <div className="p-3">
-        <h3 className="font-display font-semibold text-sm truncate group-hover:text-orange-500 transition-colors">
+        <h3 className="font-display font-semibold text-sm truncate group-hover/card:text-orange-500 transition-colors">
           {design.title}
         </h3>
         <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
