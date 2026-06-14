@@ -65,7 +65,10 @@ export default function ProductCard({ design, onChange }) {
     <Link
       to={`/design/${design.id}`}
       data-testid={`product-card-${design.id}`}
-      className="group/card block card-hover relative overflow-hidden rounded-xl bg-white dark:bg-neutral-900 soft-shadow border border-neutral-100 dark:border-neutral-800"
+      /* break-inside-avoid: предотвращает разрыв карточки колонками Masonry
+         transform-gpu: включает аппаратное ускорение, чтобы карточка не пропадала при анимации
+      */
+      className="group/card block card-hover break-inside-avoid transform-gpu relative overflow-hidden rounded-xl bg-white dark:bg-neutral-900 soft-shadow border border-neutral-100 dark:border-neutral-800"
     >
       <div className="relative overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         <img
@@ -75,9 +78,11 @@ export default function ProductCard({ design, onChange }) {
           loading="lazy"
           onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
         />
+        
+        {/* Градиент: pointer-events-none, чтобы мышь проходила сквозь него */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/0 opacity-0 group-hover/card:opacity-100 transition-opacity duration-300 pointer-events-none" />
 
-        <div className="absolute top-2 right-2 flex gap-1.5">
+        <div className="absolute top-2 right-2 flex gap-1.5 z-20">
           <button
             onClick={handleSave}
             data-testid={`save-button-${design.id}`}
@@ -88,11 +93,12 @@ export default function ProductCard({ design, onChange }) {
           </button>
         </div>
 
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover/card:opacity-100 transition-all duration-300 translate-y-2 group-hover/card:translate-y-0 z-10">
+        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover/card:opacity-100 transition-all duration-300 translate-y-2 group-hover/card:translate-y-0 z-20">
           <button
             onClick={handleLike}
             data-testid={`like-button-${design.id}`}
-            className="flex items-center gap-1 px-2.5 h-8 rounded-full glass-light text-xs font-medium"
+            // pointer-events-auto чтобы кнопка работала сквозь невидимый слой
+            className="pointer-events-auto flex items-center gap-1 px-2.5 h-8 rounded-full glass-light text-xs font-medium"
           >
             <Heart className={`w-3.5 h-3.5 ${liked ? "fill-red-500 text-red-500" : ""}`} />
             {likeCount}
@@ -100,7 +106,7 @@ export default function ProductCard({ design, onChange }) {
           <button
             onClick={handleView}
             data-testid={`view-button-${design.id}`}
-            className="flex items-center gap-1 px-2.5 h-8 rounded-full bg-white text-black hover:bg-neutral-100 text-xs font-medium"
+            className="pointer-events-auto flex items-center gap-1 px-2.5 h-8 rounded-full bg-white text-black hover:bg-neutral-100 text-xs font-medium"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             Просмотр
