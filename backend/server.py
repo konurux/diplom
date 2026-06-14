@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 import requests
 from starlette.responses import Response as StarletteResponse  # Тот самый важный импорт!
 
+APP_NAME = "dezi"
 # ---------- Настройка окружения ----------
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -106,15 +107,12 @@ async def put_object(path: str, data: bytes, content_type: str) -> dict:
     return {"path": path, "size": len(data)}
 
 async def get_object(path: str):
-    # Инициализируем хранилище GridFS прямо здесь
     fs = AsyncIOMotorGridFSBucket(db)
-    
-    # Достаем файл из MongoDB по его имени (path)
+    # Используем await, так как это асинхронная операция
     grid_out = await fs.open_download_stream_by_name(path)
     data = await grid_out.read()
     content_type = grid_out.metadata.get("contentType", "image/jpeg")
     return data, content_type
-
 
 # ---------- Password & JWT ----------
 def hash_password(password: str) -> str:
@@ -399,7 +397,10 @@ async def get_file(path: str):
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not record:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    data, ctype = get_object(path)
+    
+    # ОБЯЗАТЕЛЬНО добавьте await здесь:
+    data, ctype = await get_object(path) 
+    
     return StreamingResponse(io.BytesIO(data), media_type=record.get("content_type", ctype))
 
 # ---------- Designs ----------
