@@ -976,8 +976,10 @@ def public_api_base(request: Request) -> str:
     explicit = os.environ.get("PUBLIC_API_URL", "").rstrip("/")
     if explicit:
         return explicit
-    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
-    host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", request.url.netloc))
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",")[0].strip()
+    # Не X-Forwarded-Host: при проксировании через Vercel там адрес фронтенда,
+    # где /api/files не обслуживается. Host — настоящий адрес бэкенда.
+    host = request.headers.get("Host", request.url.netloc)
     return f"{proto}://{host}"
 
 

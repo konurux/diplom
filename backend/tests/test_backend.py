@@ -460,6 +460,17 @@ class TestUsernamesAndOG:
         assert 'property="og:title"' in r.text and "PixVault" in r.text
         assert f"/u/{uname}\"" in r.text, "og:url должен вести на адрес с username"
 
+    def test_og_image_ignores_forwarded_host(self, admin):
+        """Картинка в превью должна указывать на бэкенд, а не на проксирующий фронтенд."""
+        s, me = admin
+        path = _upload(s)
+        did = s.post(f"{API}/designs", json=_payload(images=[path]), timeout=15).json()["id"]
+        try:
+            r = requests.get(f"{API}/og/design/{did}", headers={"X-Forwarded-Host": "frontend.example.com"}, timeout=10)
+            assert f'content="{BASE_URL}/api/files/{path}?w=1280"' in r.text, r.text
+        finally:
+            s.delete(f"{API}/designs/{did}", timeout=10)
+
     def test_og_unknown_falls_back(self):
         r = requests.get(f"{API}/og/design/000000000000000000000000", timeout=10)
         assert r.status_code == 200 and "og-image.png" in r.text
