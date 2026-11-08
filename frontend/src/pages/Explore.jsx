@@ -10,7 +10,6 @@ export default function Explore() {
   const [filters, setFilters] = useState({
     category: params.get("category") || "all",
     style: params.get("style") || "all",
-    price: params.get("price") || "all",
     sort: params.get("sort") || "popular",
   });
   const q = params.get("q") || "";
@@ -36,7 +35,6 @@ export default function Explore() {
             q: q || undefined,
             category: filters.category,
             style: filters.style,
-            price: filters.price,
             sort: filters.sort,
             limit: 80,
           },
@@ -52,7 +50,7 @@ export default function Explore() {
     <div className="max-w-[1440px] mx-auto px-6 md:px-8 py-10 md:py-14" data-testid="explore-page">
       <div className="mb-8">
         <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight" data-testid="explore-title">
-          {q ? `Результаты по «${q}»` : "Каталог дизайнов"}
+          {q ? `Результаты по «${q}»` : "Галерея вдохновения"}
         </h1>
         <p className="mt-2 text-neutral-500 dark:text-neutral-400">
           {designs.length} {designs.length === 1 ? "дизайн" : "дизайнов"} найдено

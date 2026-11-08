@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ProductCard from "../components/ProductCard";
-import { Flame } from "lucide-react";
+import { Flame } from "@/components/icons";
 
 export default function Trending() {
   const [designs, setDesigns] = useState([]);
@@ -21,8 +21,8 @@ export default function Trending() {
   return (
     <div className="max-w-[1440px] mx-auto px-6 md:px-8 py-10 md:py-14" data-testid="trending-page">
       <div className="mb-10 flex items-center gap-3">
-        <div className="w-12 h-12 rounded-2xl bg-orange-500 grid place-items-center text-white">
-          <Flame className="w-6 h-6" />
+        <div className="w-12 h-12 rounded-2xl bg-brand-soft text-brand grid place-items-center">
+          <Flame weight="duotone" className="w-6 h-6" />
         </div>
         <div>
           <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight">В тренде</h1>

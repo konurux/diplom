@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Shield, Check, X, Edit3, Trash2, Users as UsersIcon, FileCheck, Clock, UserPlus } from "lucide-react";
+import { Shield, Check, X, Edit3, Trash2, Users as UsersIcon, FileCheck, Clock, UserPlus } from "@/components/icons";
 import { api, fileUrl, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
@@ -159,15 +159,15 @@ export default function Admin() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-10">
         <StatCard icon={<FileCheck />} label="Одобрено" value={stats.designs} color="bg-emerald-500" />
-        <StatCard icon={<Clock />} label="На модерации" value={stats.pending} color="bg-orange-500" />
-        <StatCard icon={<UsersIcon />} label="Пользователей" value={stats.users} color="bg-violet-500" />
+        <StatCard icon={<Clock />} label="На модерации" value={stats.pending} color="bg-brand" />
+        <StatCard icon={<UsersIcon />} label="Пользователей" value={stats.users} color="bg-brand-2" />
       </div>
 
       <Tabs defaultValue="pending" className="w-full">
         <TabsList className="rounded-full flex-wrap h-auto" data-testid="admin-tabs">
           <TabsTrigger value="pending" className="rounded-full gap-2" data-testid="tab-pending">
             На модерации
-            {stats.pending > 0 && <span className="px-1.5 py-0.5 bg-orange-500 text-white text-xs rounded-full">{stats.pending}</span>}
+            {stats.pending > 0 && <span className="px-1.5 py-0.5 bg-lime text-lime-foreground text-xs font-semibold rounded-full">{stats.pending}</span>}
           </TabsTrigger>
           <TabsTrigger value="approved" className="rounded-full" data-testid="tab-approved">Одобренные</TabsTrigger>
           <TabsTrigger value="rejected" className="rounded-full" data-testid="tab-rejected">Отклонённые</TabsTrigger>
@@ -190,7 +190,7 @@ export default function Admin() {
               {users.map((u) => (
                 <div key={u.id} className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800" data-testid={`admin-user-${u.id}`}>
                   <Avatar className="w-12 h-12">
-                    <AvatarImage src={u.avatar_url || undefined} />
+                    <AvatarImage src={u.avatar_url ? fileUrl(u.avatar_url) : undefined} />
                     <AvatarFallback>{u.name?.[0]?.toUpperCase()}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
@@ -244,7 +244,7 @@ export default function Admin() {
 function StatCard({ icon, label, value, color }) {
   return (
     <div className="p-5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 soft-shadow flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl grid place-items-center text-white ${color}`}>
+      <div className={`w-12 h-12 rounded-xl grid place-items-center text-white [&>svg]:w-6 [&>svg]:h-6 ${color}`}>
         {icon}
       </div>
       <div>

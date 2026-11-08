@@ -4,7 +4,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
 export const api = axios.create({
-  baseURL: "https://diplom-sn76.onrender.com/api",
+  baseURL: `${process.env.REACT_APP_BACKEND_URL || "https://diplom-sn76.onrender.com"}/api`,
   withCredentials: true,
 });
 
@@ -25,7 +25,7 @@ export function fileUrl(path) {
   if (path.startsWith("http")) return path;
   
   // Вставьте сюда полный адрес вашего бэкенда на Render
-  const API = "https://diplom-sn76.onrender.com/api"; 
+  const API = `${process.env.REACT_APP_BACKEND_URL || "https://diplom-sn76.onrender.com"}/api`;
   
   return `${API}/files/${path}`;
 }

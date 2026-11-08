@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Heart, Bookmark, ExternalLink, Star } from "lucide-react";
+import { Heart, Bookmark, ExternalLink, Star } from "@/components/icons";
 import { toast } from "sonner";
 import { fileUrl, api, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -89,7 +89,7 @@ export default function ProductCard({ design, onChange }) {
             aria-label="Сохранить"
             className="w-8 h-8 grid place-items-center rounded-full glass-light hover:bg-white dark:hover:bg-black transition-colors opacity-0 group-hover/card:opacity-100"
           >
-            <Bookmark className={`w-3.5 h-3.5 ${saved ? "fill-current text-orange-500" : ""}`} />
+            <Bookmark className={`w-3.5 h-3.5 ${saved ? "fill-current text-brand" : ""}`} />
           </button>
         </div>
 
@@ -113,15 +113,10 @@ export default function ProductCard({ design, onChange }) {
           </button>
         </div>
 
-        <div className="absolute top-2 left-2">
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${design.is_free ? "bg-emerald-500 text-white" : "bg-white text-black"}`}>
-            {design.is_free ? "Бесплатно" : `${Number(design.price).toFixed(0)} ₽`}
-          </span>
-        </div>
       </div>
 
       <div className="p-3">
-        <h3 className="font-display font-semibold text-sm truncate group-hover/card:text-orange-500 transition-colors">
+        <h3 className="font-display font-semibold text-sm truncate group-hover/card:text-brand transition-colors">
           {design.title}
         </h3>
         <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">

@@ -12,6 +12,7 @@ import ProductDetail from "./pages/ProductDetail";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Profile from "./pages/Profile";
+import Portfolio from "./pages/Portfolio";
 import Favorites from "./pages/Favorites";
 import UploadDesign from "./pages/UploadDesign";
 import Admin from "./pages/Admin";
@@ -34,6 +35,7 @@ function App() {
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
                 <Route path="/profile" element={<Profile />} />
+                <Route path="/u/:id" element={<Portfolio />} />
                 <Route path="/upload" element={<UploadDesign />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<NotFound />} />

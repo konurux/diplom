@@ -1,76 +1,92 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 html {
-    font-family: 'Manrope', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: "cv11", "ss01", "ss03";
 }
 
 body {
     margin: 0;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #F7F7F8;
-    color: #111111;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
     transition: background-color 200ms ease, color 200ms ease;
 }
 
-.dark body {
-    background-color: #0A0A0A;
-    color: #FFFFFF;
+::selection {
+    background: hsl(var(--brand) / 0.22);
 }
 
 .font-display {
-    font-family: 'Outfit', system-ui, sans-serif;
-    letter-spacing: -0.02em;
+    font-family: 'Inter Tight', 'Inter', system-ui, sans-serif;
+    letter-spacing: -0.03em;
 }
 
 @layer base {
+    /* ---------- Светлая тема «Studio» ---------- */
     :root {
-        --background: 220 14% 97%;
-        --foreground: 0 0% 7%;
+        --background: 240 14% 97%;      /* #F7F7F9 */
+        --foreground: 240 13% 8%;       /* #121217 */
         --card: 0 0% 100%;
-        --card-foreground: 0 0% 7%;
+        --card-foreground: 240 13% 8%;
         --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 7%;
-        --primary: 0 0% 7%;
+        --popover-foreground: 240 13% 8%;
+        --primary: 240 13% 8%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 220 9% 94%;
-        --secondary-foreground: 0 0% 7%;
-        --muted: 220 9% 94%;
-        --muted-foreground: 0 0% 45%;
-        --accent: 220 9% 94%;
-        --accent-foreground: 0 0% 7%;
-        --destructive: 0 84% 60%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 220 13% 91%;
-        --input: 220 13% 91%;
-        --ring: 0 0% 7%;
-        --radius: 1rem;
+        --secondary: 240 12% 94%;
+        --secondary-foreground: 240 13% 8%;
+        --muted: 240 12% 94%;
+        --muted-foreground: 240 6% 46%;
+        --accent: 240 12% 94%;
+        --accent-foreground: 240 13% 8%;
+        --destructive: 0 78% 56%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 240 11% 90%;
+        --input: 240 11% 88%;
+        --ring: 246 100% 65%;
+        --radius: 0.875rem;
+
+        /* Акценты */
+        --brand: 246 100% 64%;          /* электрический фиолетовый #5B4BFF */
+        --brand-foreground: 0 0% 100%;
+        --brand-soft: 246 100% 96%;
+        --brand-2: 214 100% 58%;        /* синий для градиентов */
+        --lime: 76 90% 60%;             /* маркер-выделение #C6F23E */
+        --lime-foreground: 240 13% 8%;
     }
+    /* ---------- Тёмная тема ---------- */
     .dark {
-        --background: 0 0% 4%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 8%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 8%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 7%;
-        --secondary: 0 0% 12%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 12%;
-        --muted-foreground: 0 0% 64%;
-        --accent: 0 0% 12%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62% 30%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 15%;
-        --input: 0 0% 15%;
-        --ring: 0 0% 83%;
+        --background: 240 13% 6%;       /* #0E0E12 */
+        --foreground: 240 10% 96%;
+        --card: 240 11% 10%;
+        --card-foreground: 240 10% 96%;
+        --popover: 240 11% 10%;
+        --popover-foreground: 240 10% 96%;
+        --primary: 240 10% 96%;
+        --primary-foreground: 240 13% 8%;
+        --secondary: 240 9% 14%;
+        --secondary-foreground: 240 10% 96%;
+        --muted: 240 9% 14%;
+        --muted-foreground: 240 6% 64%;
+        --accent: 240 9% 14%;
+        --accent-foreground: 240 10% 96%;
+        --destructive: 0 72% 55%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 240 9% 16%;
+        --input: 240 9% 18%;
+        --ring: 245 100% 72%;
+
+        --brand: 245 100% 72%;          /* светлее для контраста на тёмном */
+        --brand-foreground: 240 13% 8%;
+        --brand-soft: 246 45% 17%;
+        --brand-2: 210 100% 64%;
+        --lime: 76 88% 62%;
+        --lime-foreground: 240 13% 8%;
     }
 }
 
@@ -95,7 +111,14 @@ body {
         border: 1px solid rgba(255, 255, 255, 0.08);
     }
     .soft-shadow {
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 1px 2px rgba(18, 18, 23, 0.04), 0 8px 24px rgba(18, 18, 23, 0.06);
+    }
+    .marker {
+        background: linear-gradient(transparent 58%, hsl(var(--lime)) 58%, hsl(var(--lime)) 92%, transparent 92%);
+        padding: 0 0.08em;
+    }
+    .dark .marker {
+        background: linear-gradient(transparent 58%, hsl(var(--lime) / 0.35) 58%, hsl(var(--lime) / 0.35) 92%, transparent 92%);
     }
     .dark .soft-shadow {
         box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
@@ -122,14 +145,14 @@ body {
 
 /* Hero blob */
 .hero-blob {
-    background: radial-gradient(circle at 30% 30%, #ffd4a8, transparent 60%),
-                radial-gradient(circle at 70% 70%, #c2b5ff, transparent 55%),
-                radial-gradient(circle at 50% 50%, #b5e8ff, transparent 65%);
+    background: radial-gradient(circle at 30% 30%, hsl(var(--brand) / 0.55), transparent 60%),
+                radial-gradient(circle at 70% 70%, hsl(var(--brand-2) / 0.45), transparent 55%),
+                radial-gradient(circle at 50% 50%, hsl(var(--lime) / 0.35), transparent 65%);
     filter: blur(60px);
-    opacity: 0.6;
+    opacity: 0.45;
 }
 .dark .hero-blob {
-    opacity: 0.25;
+    opacity: 0.3;
 }
 
 /* Card hover */

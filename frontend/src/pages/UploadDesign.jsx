@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Upload as UploadIcon, X, Image as ImageIcon, Link2, Check } from "lucide-react";
+import { Upload as UploadIcon, X, Image as ImageIcon, Link2, Check } from "@/components/icons";
 import { api, fileUrl, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
-import { Switch } from "../components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { CATEGORIES, STYLES } from "../components/Sidebar";
 
@@ -21,8 +20,6 @@ export default function UploadDesign() {
     category: "ui-kit",
     styles: ["minimalism"],
     external_url: "",
-    price: 0,
-    is_free: true,
     tags: "",
   });
   const [images, setImages] = useState([]);
@@ -79,8 +76,6 @@ export default function UploadDesign() {
         category: form.category,
         styles: form.styles,
         external_url: form.external_url.trim(),
-        price: form.is_free ? 0 : parseFloat(form.price) || 0,
-        is_free: form.is_free,
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         images,
       };
@@ -100,7 +95,7 @@ export default function UploadDesign() {
   return (
     <div className="max-w-3xl mx-auto px-6 py-10 md:py-14" data-testid="upload-page">
       <div className="mb-8">
-        <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight">Опубликовать дизайн</h1>
+        <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight">Добавить работу в портфолио</h1>
         <p className="mt-2 text-neutral-500">
           {isStaff
             ? "Ваша работа будет опубликована сразу — у вас права администратора/модератора."
@@ -227,31 +222,6 @@ export default function UploadDesign() {
             placeholder="dashboard, dark, mobile"
           />
         </div>
-
-        <div className="flex items-center justify-between p-4 rounded-2xl bg-neutral-100 dark:bg-neutral-900">
-          <div>
-            <div className="font-medium">Бесплатный дизайн</div>
-            <div className="text-xs text-neutral-500">Пользователи смогут открыть без оплаты</div>
-          </div>
-          <Switch
-            checked={form.is_free}
-            onCheckedChange={(v) => setForm({ ...form, is_free: v })}
-            data-testid="upload-isfree-switch"
-          />
-        </div>
-
-        {!form.is_free && (
-          <div>
-            <Label htmlFor="price">Цена, ₽</Label>
-            <Input
-              id="price" type="number" min="0" step="50"
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-              data-testid="upload-price-input"
-              className="mt-1.5 h-11 rounded-xl max-w-[200px]"
-            />
-          </div>
-        )}
 
         <div className="pt-4 flex gap-3">
           <Button type="submit" disabled={submitting} className="h-12 px-8 rounded-full text-base gap-2" data-testid="upload-submit-button">

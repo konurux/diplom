@@ -5,7 +5,12 @@ const ThemeContext = createContext(null);
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem("dezi-theme") || "light";
+      const saved = localStorage.getItem("dezi-theme");
+      if (saved) return saved;
+    } catch {}
+    // По умолчанию — системная тема (многие дизайнеры работают в тёмной)
+    try {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     } catch {
       return "light";
     }

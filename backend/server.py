@@ -36,7 +36,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("dezi")
+logger = logging.getLogger("pixvault")
 
 # ---------- DB ----------
 mongo_url = os.environ["MONGO_URL"]
@@ -44,7 +44,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 # ---------- App & Инициализация ----------
-app = FastAPI(title="Dezi Market API")
+app = FastAPI(title="PixVault API", description="Digital Asset & Portfolio Platform")
 api_router = APIRouter(prefix="/api")
 
 # ---------- АБСОЛЮТНЫЙ ПЕРЕХВАТЧИК OPTIONS (ASGI УРОВЕНЬ) ----------
@@ -218,8 +218,6 @@ class DesignCreate(BaseModel):
     category: str
     styles: List[str] = Field(min_length=1)
     external_url: str = Field(min_length=4, max_length=500)
-    price: float = 0.0
-    is_free: bool = True
     tags: List[str] = []
     images: List[str] = []
 
@@ -229,8 +227,6 @@ class DesignUpdate(BaseModel):
     category: Optional[str] = None
     styles: Optional[List[str]] = None
     external_url: Optional[str] = None
-    price: Optional[float] = None
-    is_free: Optional[bool] = None
     tags: Optional[List[str]] = None
     images: Optional[List[str]] = None
     status: Optional[str] = None
@@ -273,8 +269,6 @@ async def serialize_design(d: dict, current_user: Optional[dict] = None) -> dict
         "category": d["category"],
         "styles": d.get("styles") or ([d["style"]] if d.get("style") else []),
         "external_url": d.get("external_url", ""),
-        "price": d.get("price", 0.0),
-        "is_free": d.get("is_free", True),
         "tags": d.get("tags", []),
         "images": d.get("images", []),
         "status": d.get("status", "pending"),
@@ -358,6 +352,33 @@ async def refresh_token(request: Request, response: Response):
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Недействительный токен")
 
+# ---------- Public portfolio ----------
+@api_router.get("/users/{user_id}")
+async def public_user(user_id: str):
+    try:
+        u = await db.users.find_one({"_id": ObjectId(user_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    if not u:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    designs = await db.designs.count_documents({"author_id": user_id, "status": "approved"})
+    agg = await db.designs.aggregate([
+        {"$match": {"author_id": user_id, "status": "approved"}},
+        {"$group": {"_id": None, "likes": {"$sum": "$likes_count"}, "views": {"$sum": "$views_count"}}},
+    ]).to_list(1)
+    totals = agg[0] if agg else {}
+    return {
+        "id": str(u["_id"]),
+        "name": u.get("name", ""),
+        "role": u.get("role", "user"),
+        "avatar_url": u.get("avatar_url"),
+        "bio": u.get("bio"),
+        "created_at": u.get("created_at"),
+        "designs_count": designs,
+        "likes_total": totals.get("likes", 0),
+        "views_total": totals.get("views", 0),
+    }
+
 # ---------- Profile ----------
 @api_router.patch("/users/me")
 async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_user)):
@@ -420,8 +441,6 @@ async def create_design(body: DesignCreate, user: dict = Depends(get_current_use
         "category": body.category,
         "styles": [s for s in body.styles if s][:5] or ["modern"],
         "external_url": body.external_url.strip(),
-        "price": 0.0 if body.is_free else max(body.price, 0.0),
-        "is_free": body.is_free,
         "tags": [t.strip() for t in body.tags if t.strip()][:12],
         "images": body.images[:8],
         "status": status,
@@ -444,7 +463,6 @@ async def list_designs(
     q: Optional[str] = None,
     category: Optional[str] = None,
     style: Optional[str] = None,
-    price: Optional[str] = None,
     sort: str = "popular",
     status: str = "approved",
     author_id: Optional[str] = None,
@@ -453,8 +471,13 @@ async def list_designs(
 ):
     current = await get_optional_user(request)
     query: dict = {}
-    if status == "approved":
+    is_own = bool(current and author_id and author_id == current.get("id"))
+    if status == "all" and (is_own or (current and current.get("role") in ("admin", "moderator"))):
+        pass  # автор (или модератор) видит работы во всех статусах
+    elif status == "approved":
         query["status"] = "approved"
+    elif is_own:
+        query["status"] = status
     else:
         if not current or current.get("role") not in ("admin", "moderator"):
             query["status"] = "approved"
@@ -470,10 +493,6 @@ async def list_designs(
         query["category"] = category
     if style and style != "all":
         query["styles"] = style
-    if price == "free":
-        query["is_free"] = True
-    elif price == "paid":
-        query["is_free"] = False
     if author_id:
         query["author_id"] = author_id
 
@@ -481,7 +500,8 @@ async def list_designs(
         "popular": [("likes_count", -1), ("views_count", -1)],
         "newest": [("created_at", -1)],
         "rating": [("rating", -1), ("rating_count", -1)],
-        "downloads": [("downloads_count", -1)],
+        "views": [("views_count", -1)],
+        "downloads": [("views_count", -1)],  # старый ключ сортировки
     }
     sort_spec = sort_map.get(sort, sort_map["popular"])
     cursor = db.designs.find(query).sort(sort_spec).skip(skip).limit(min(limit, 100))
@@ -527,8 +547,6 @@ async def update_design(design_id: str, body: DesignUpdate, user: dict = Depends
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     if "status" in update and not is_staff:
         del update["status"]
-    if "is_free" in update and update["is_free"]:
-        update["price"] = 0.0
     update["updated_at"] = now_iso()
     if not is_staff and is_owner:
         update.setdefault("status", "pending")
@@ -599,63 +617,6 @@ async def list_favorites(user: dict = Depends(get_current_user)):
             d = await db.designs.find_one({"_id": ObjectId(f["design_id"])})
             if d:
                 result.append(await serialize_design(d, user))
-        except Exception:
-            continue
-    return result
-
-# ---------- Download / Purchase ----------
-@api_router.post("/designs/{design_id}/download")
-async def download_design(design_id: str, user: dict = Depends(get_current_user)):
-    try:
-        d = await db.designs.find_one({"_id": ObjectId(design_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Неверный ID")
-    if not d or d.get("status") != "approved":
-        raise HTTPException(status_code=404, detail="Дизайн недоступен")
-    if not d.get("is_free", True):
-        purchased = await db.purchases.find_one({"user_id": user["id"], "design_id": design_id, "status": "completed"})
-        if not purchased:
-            raise HTTPException(status_code=402, detail="Требуется покупка")
-    await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"downloads_count": 1}})
-    return {"ok": True, "files": d.get("images", [])}
-
-@api_router.post("/designs/{design_id}/purchase")
-async def purchase_design(design_id: str, user: dict = Depends(get_current_user)):
-    try:
-        d = await db.designs.find_one({"_id": ObjectId(design_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Неверный ID")
-    if not d or d.get("status") != "approved":
-        raise HTTPException(status_code=404, detail="Дизайн недоступен")
-    if d.get("is_free", True):
-        return {"ok": True, "status": "free"}
-    existing = await db.purchases.find_one({"user_id": user["id"], "design_id": design_id, "status": "completed"})
-    if existing:
-        return {"ok": True, "status": "already_purchased"}
-    await db.purchases.insert_one({
-        "user_id": user["id"],
-        "design_id": design_id,
-        "amount": d.get("price", 0.0),
-        "status": "completed",
-        "created_at": now_iso(),
-    })
-    return {"ok": True, "status": "completed"}
-
-@api_router.get("/purchases")
-async def list_purchases(user: dict = Depends(get_current_user)):
-    items = await db.purchases.find({"user_id": user["id"]}).sort("created_at", -1).to_list(500)
-    result = []
-    for p in items:
-        try:
-            d = await db.designs.find_one({"_id": ObjectId(p["design_id"])})
-            if d:
-                serialized = await serialize_design(d, user)
-                serialized["purchase"] = {
-                    "amount": p.get("amount", 0),
-                    "status": p.get("status"),
-                    "created_at": p.get("created_at"),
-                }
-                result.append(serialized)
         except Exception:
             continue
     return result
@@ -763,7 +724,6 @@ async def admin_delete_user(user_id: str, current: dict = Depends(require_roles(
     await db.comments.delete_many({"user_id": user_id})
     await db.favorites.delete_many({"user_id": user_id})
     await db.likes.delete_many({"user_id": user_id})
-    await db.purchases.delete_many({"user_id": user_id})
     return {"ok": True}
 
 # ---------- Stats ----------
@@ -777,7 +737,7 @@ async def stats():
 
 @api_router.get("/")
 async def root():
-    return {"app": "Dezi Market API", "status": "ok"}
+    return {"app": "PixVault API", "status": "ok"}
 
 # ---------- Роутер подключаем в самом конце файла ----------
 app.include_router(api_router)

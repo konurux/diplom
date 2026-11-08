@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Search, Sun, Moon, Plus, Heart, Compass, TrendingUp, LayoutGrid, Shield, LogOut, User as UserIcon, Menu, X } from "lucide-react";
+import { Search, Sun, Moon, Plus, Bookmark, Compass, TrendingUp, LayoutGrid, Shield, LogOut, User as UserIcon, Menu, X } from "@/components/icons";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { Button } from "./ui/button";
@@ -13,6 +13,8 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import { fileUrl } from "../lib/api";
+import Logo from "./Logo";
 
 export default function Header() {
   const { user, logout } = useAuth();
@@ -35,9 +37,9 @@ export default function Header() {
   };
 
   const navItems = [
-    { to: "/explore", label: "Категории", icon: LayoutGrid, testid: "nav-categories" },
+    { to: "/explore", label: "Галерея", icon: LayoutGrid, testid: "nav-categories" },
     { to: "/trending", label: "В тренде", icon: TrendingUp, testid: "nav-trending" },
-    { to: "/favorites", label: "Избранное", icon: Heart, testid: "nav-favorites" },
+    { to: "/favorites", label: "Мудборд", icon: Bookmark, testid: "nav-favorites" },
   ];
 
   const isStaff = user && user !== false && (user.role === "admin" || user.role === "moderator");
@@ -48,8 +50,8 @@ export default function Header() {
       data-testid="site-header"
     >
       <div className="max-w-[1440px] mx-auto px-4 md:px-8 h-16 md:h-20 flex items-center gap-3 md:gap-6">
-        <Link to="/" className="font-display text-2xl md:text-3xl font-bold tracking-tighter shrink-0" data-testid="logo-link">
-          dezi<span className="text-orange-500">.</span>
+        <Link to="/" className="shrink-0" aria-label="PixVault — на главную" data-testid="logo-link">
+          <Logo markClassName="w-8 h-8 md:w-9 md:h-9" textClassName="text-xl md:text-2xl" />
         </Link>
 
         <form onSubmit={submitSearch} className="hidden md:flex flex-1 max-w-2xl mx-auto" data-testid="search-form">
@@ -72,8 +74,13 @@ export default function Header() {
               key={item.to}
               to={item.to}
               data-testid={item.testid}
-              className="px-3 py-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors text-neutral-700 dark:text-neutral-300"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-full transition-colors ${
+                location.pathname === item.to
+                  ? "bg-brand-soft text-brand font-medium"
+                  : "hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-700 dark:text-neutral-300"
+              }`}
             >
+              <item.icon weight={location.pathname === item.to ? "fill" : "regular"} className="w-4 h-4" />
               {item.label}
             </Link>
           ))}
@@ -101,7 +108,7 @@ export default function Header() {
                 <DropdownMenuTrigger asChild>
                   <button data-testid="user-avatar-button" className="rounded-full focus:outline-none focus:ring-2 ring-neutral-300 dark:ring-neutral-700">
                     <Avatar className="w-10 h-10">
-                      <AvatarImage src={user.avatar_url || undefined} alt={user.name} />
+                      <AvatarImage src={user.avatar_url ? fileUrl(user.avatar_url) : undefined} alt={user.name} />
                       <AvatarFallback className="bg-neutral-900 text-white dark:bg-white dark:text-black text-sm font-semibold">
                         {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
                       </AvatarFallback>
@@ -115,13 +122,13 @@ export default function Header() {
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate("/profile")} data-testid="menu-profile">
-                    <UserIcon className="w-4 h-4 mr-2" /> Профиль
+                    <UserIcon className="w-4 h-4 mr-2" /> Моё портфолио
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/favorites")} data-testid="menu-favorites">
-                    <Heart className="w-4 h-4 mr-2" /> Избранное
+                    <Bookmark className="w-4 h-4 mr-2" /> Мудборд
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/upload")} data-testid="menu-upload">
-                    <Plus className="w-4 h-4 mr-2" /> Опубликовать дизайн
+                    <Plus className="w-4 h-4 mr-2" /> Добавить работу
                   </DropdownMenuItem>
                   {isStaff && (
                     <DropdownMenuItem onClick={() => navigate("/admin")} data-testid="menu-admin">
@@ -183,7 +190,9 @@ export default function Header() {
               key={item.to}
               to={item.to}
               onClick={() => setMobileOpen(false)}
-              className="flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              className={`flex items-center gap-3 p-2 rounded-lg ${
+                location.pathname === item.to ? "bg-brand-soft text-brand font-medium" : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              }`}
             >
               <item.icon className="w-4 h-4" />
               {item.label}

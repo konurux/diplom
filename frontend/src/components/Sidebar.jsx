@@ -1,5 +1,5 @@
 import React from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "@/components/icons";
 
 export const STYLES = [
   { value: "minimalism", label: "Минимализм" },
@@ -19,17 +19,11 @@ export const CATEGORIES = [
   { value: "illustrations", label: "Иллюстрации" },
 ];
 
-export const PRICES = [
-  { value: "all", label: "Все" },
-  { value: "free", label: "Бесплатные" },
-  { value: "paid", label: "Платные" },
-];
-
 export const SORTS = [
   { value: "popular", label: "Популярные" },
   { value: "newest", label: "Новые" },
   { value: "rating", label: "По рейтингу" },
-  { value: "downloads", label: "По просмотрам" },
+  { value: "views", label: "По просмотрам" },
 ];
 
 function Chip({ active, onClick, children, testid }) {
@@ -39,7 +33,7 @@ function Chip({ active, onClick, children, testid }) {
       data-testid={testid}
       className={`text-sm px-3.5 h-9 rounded-full border transition-all ${
         active
-          ? "bg-neutral-900 dark:bg-white text-white dark:text-black border-neutral-900 dark:border-white"
+          ? "bg-brand text-brand-foreground border-brand shadow-sm"
           : "bg-transparent border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600"
       }`}
     >
@@ -91,22 +85,6 @@ export default function Sidebar({ filters, onChange }) {
               testid={`category-${c.value}`}
             >
               {c.label}
-            </Chip>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-3">Цена</div>
-        <div className="flex flex-wrap gap-2">
-          {PRICES.map((p) => (
-            <Chip
-              key={p.value}
-              active={(filters.price || "all") === p.value}
-              onClick={() => set("price", p.value)}
-              testid={`price-${p.value}`}
-            >
-              {p.label}
             </Chip>
           ))}
         </div>

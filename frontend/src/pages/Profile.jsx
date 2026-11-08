@@ -1,140 +1,256 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Heart, Bookmark, ExternalLink, Star } from "lucide-react";
+import { Camera, Pencil, Trash2, Upload, Bookmark, LayoutGrid, Settings, Eye } from "@/components/icons";
 import { toast } from "sonner";
-import { fileUrl, api, formatApiErrorDetail } from "../lib/api";
+import { api, fileUrl, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
+import ProductCard from "../components/ProductCard";
+import EditDesignDialog from "../components/EditDesignDialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
+import { Badge } from "../components/ui/badge";
 
-const PLACEHOLDERS = [
-  "https://images.unsplash.com/photo-1581291518633-83b4ebd1d83e?w=800&q=80",
-  "https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=800&q=80",
-];
+const STATUS_LABEL = {
+  approved: { text: "Одобрен", variant: "default" },
+  pending: { text: "На модерации", variant: "secondary" },
+  rejected: { text: "Отклонён", variant: "destructive" },
+};
 
-export default function ProductCard({ design, onChange }) {
+function Avatar({ user, size = "w-24 h-24 text-3xl" }) {
+  const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
+  return user?.avatar_url ? (
+    <img src={fileUrl(user.avatar_url)} alt={user.name} className={`${size} rounded-full object-cover`} />
+  ) : (
+    <div className={`${size} rounded-full bg-gradient-to-br from-brand to-brand-2 grid place-items-center text-white font-display font-bold`}>
+      {initial}
+    </div>
+  );
+}
+
+function EmptyState({ title, text, action }) {
+  return (
+    <div className="text-center py-20 border border-dashed border-neutral-300 dark:border-neutral-700 rounded-3xl">
+      <h3 className="font-display text-2xl font-semibold">{title}</h3>
+      <p className="mt-2 text-neutral-500">{text}</p>
+      {action}
+    </div>
+  );
+}
+
+export default function Profile() {
+  const { user, loading: authLoading, refreshUser } = useAuth();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [liked, setLiked] = useState(!!design.liked_by_me);
-  const [saved, setSaved] = useState(!!design.saved_by_me);
-  const [likeCount, setLikeCount] = useState(design.likes_count || 0);
 
-  const cover = design.images && design.images.length > 0 ? fileUrl(design.images[0]) : PLACEHOLDERS[design.id?.charCodeAt(0) % 2 || 0];
+  const [works, setWorks] = useState([]);
+  const [saved, setSaved] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editTarget, setEditTarget] = useState(null);
 
-  const requireAuth = () => {
-    if (!user || user === false) {
-      toast.error("Войдите, чтобы продолжить");
-      navigate("/login");
-      return false;
-    }
-    return true;
-  };
+  const [name, setName] = useState("");
+  const [bio, setBio] = useState("");
+  const [avatar, setAvatar] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
 
-  const handleLike = async (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (!requireAuth()) return;
+  const load = useCallback(async (uid) => {
+    setLoading(true);
     try {
-      const { data } = await api.post(`/designs/${design.id}/like`);
-      setLiked(data.liked);
-      setLikeCount((c) => c + (data.liked ? 1 : -1));
+      const [w, p] = await Promise.all([
+        api.get("/designs", { params: { author_id: uid, status: "all", sort: "newest", limit: 100 } }),
+        api.get("/favorites"),
+      ]);
+      setWorks(w.data);
+      setSaved(p.data);
     } catch (err) {
       toast.error(formatApiErrorDetail(err.response?.data?.detail));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+    setName(user.name || "");
+    setBio(user.bio || "");
+    setAvatar(user.avatar_url || null);
+    load(user.id);
+  }, [user, authLoading, navigate, load]);
+
+  if (authLoading || !user) {
+    return <div className="text-center py-20 text-neutral-500">Загрузка...</div>;
+  }
+
+  const handleAvatar = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/upload", fd);
+      setAvatar(data.path);
+      toast.success("Аватар загружен — не забудьте сохранить");
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail));
+    } finally {
+      setUploading(false);
     }
   };
 
   const handleSave = async (e) => {
-    e.stopPropagation();
     e.preventDefault();
-    if (!requireAuth()) return;
+    setSaving(true);
     try {
-      const { data } = await api.post(`/designs/${design.id}/favorite`);
-      setSaved(data.saved);
-      toast.success(data.saved ? "Добавлено в избранное" : "Удалено из избранного");
-      if (onChange) onChange();
+      await api.patch("/users/me", { name: name.trim(), bio, avatar_url: avatar });
+      await refreshUser();
+      toast.success("Профиль сохранён");
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (d) => {
+    if (!window.confirm(`Удалить «${d.title}»?`)) return;
+    try {
+      await api.delete(`/designs/${d.id}`);
+      toast.success("Работа удалена");
+      load(user.id);
     } catch (err) {
       toast.error(formatApiErrorDetail(err.response?.data?.detail));
     }
   };
 
-  const handleView = (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    navigate(`/design/${design.id}`);
-  };
+  const approvedCount = works.filter((d) => d.status === "approved").length;
 
   return (
-    <Link
-      to={`/design/${design.id}`}
-      data-testid={`product-card-${design.id}`}
-      className="group/card block card-hover relative overflow-hidden rounded-xl bg-white dark:bg-neutral-900 soft-shadow border border-neutral-100 dark:border-neutral-800"
-    >
-      <div className="relative overflow-hidden bg-neutral-100 dark:bg-neutral-800">
-        <img
-          src={cover}
-          alt={design.title}
-          className="card-img w-full h-auto object-cover"
-          loading="lazy"
-          onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
-        />
-        
-        {/* Градиент: добавлен pointer-events-none, чтобы мышь проходила сквозь него */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/0 to-black/0 opacity-0 group-hover/card:opacity-100 transition-opacity duration-300 pointer-events-none" />
-
-        {/* Кнопка сохранения: добавлен z-10 для приоритета */}
-        <div className="absolute top-2 right-2 flex gap-1.5 z-10">
-          <button
-            onClick={handleSave}
-            data-testid={`save-button-${design.id}`}
-            aria-label="Сохранить"
-            className="w-8 h-8 grid place-items-center rounded-full glass-light hover:bg-white dark:hover:bg-black transition-colors opacity-0 group-hover/card:opacity-100"
-          >
-            <Bookmark className={`w-3.5 h-3.5 ${saved ? "fill-current text-orange-500" : ""}`} />
-          </button>
+    <div className="max-w-[1440px] mx-auto px-6 md:px-8 py-10 md:py-14" data-testid="profile-page">
+      <div className="flex flex-col lg:flex-row lg:items-center gap-6 mb-10">
+        <Avatar user={{ ...user, avatar_url: user.avatar_url }} />
+        <div className="flex-1 min-w-0">
+          <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight truncate">{user.name}</h1>
+          <p className="mt-1 text-neutral-500 truncate">{user.email}</p>
+          {user.bio && <p className="mt-2 text-neutral-600 dark:text-neutral-300 max-w-2xl">{user.bio}</p>}
+          <div className="mt-3 flex gap-4 text-sm text-neutral-500">
+            <span><b className="text-neutral-900 dark:text-white">{works.length}</b> работ</span>
+            <span><b className="text-neutral-900 dark:text-white">{approvedCount}</b> опубликовано</span>
+            <span><b className="text-neutral-900 dark:text-white">{saved.length}</b> в мудборде</span>
+          </div>
         </div>
-
-        {/* Блок кнопок внизу: добавлен z-10 и pointer-events-auto */}
-        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover/card:opacity-100 transition-all duration-300 translate-y-2 group-hover/card:translate-y-0 z-10 pointer-events-none">
-          <button
-            onClick={handleLike}
-            data-testid={`like-button-${design.id}`}
-            className="flex items-center gap-1 px-2.5 h-8 rounded-full glass-light text-xs font-medium pointer-events-auto"
-          >
-            <Heart className={`w-3.5 h-3.5 ${liked ? "fill-red-500 text-red-500" : ""}`} />
-            {likeCount}
-          </button>
-          <button
-            onClick={handleView}
-            data-testid={`view-button-${design.id}`}
-            className="flex items-center gap-1 px-2.5 h-8 rounded-full bg-white text-black hover:bg-neutral-100 text-xs font-medium pointer-events-auto"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Просмотр
-          </button>
-        </div>
-
-        <div className="absolute top-2 left-2">
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${design.is_free ? "bg-emerald-500 text-white" : "bg-white text-black"}`}>
-            {design.is_free ? "Бесплатно" : `${Number(design.price).toFixed(0)} ₽`}
-          </span>
+        <div className="flex flex-wrap gap-2">
+          <Link to={`/u/${user.id}`}>
+            <Button variant="outline" className="rounded-full" data-testid="profile-public-link"><Eye className="w-4 h-4 mr-2" />Публичное портфолио</Button>
+          </Link>
+          <Link to="/upload">
+            <Button className="rounded-full"><Upload className="w-4 h-4 mr-2" />Добавить работу</Button>
+          </Link>
         </div>
       </div>
 
-      <div className="p-3">
-        <h3 className="font-display font-semibold text-sm truncate group-hover/card:text-orange-500 transition-colors">
-          {design.title}
-        </h3>
-        <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-          <span className="truncate">{design.author?.name || "Аноним"}</span>
-          <span className="flex items-center gap-2 shrink-0">
-            <span className="flex items-center gap-0.5"><Heart className="w-3 h-3" /> {likeCount}</span>
-            {design.rating > 0 && (
-              <span className="flex items-center gap-0.5">
-                <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                {Number(design.rating).toFixed(1)}
-              </span>
-            )}
-          </span>
-        </div>
-      </div>
-    </Link>
+      <Tabs defaultValue="works">
+        <TabsList className="mb-8">
+          <TabsTrigger value="works" data-testid="profile-tab-works"><LayoutGrid className="w-4 h-4 mr-2" />Портфолио</TabsTrigger>
+          <TabsTrigger value="saved" data-testid="profile-tab-saved"><Bookmark className="w-4 h-4 mr-2" />Мудборд</TabsTrigger>
+          <TabsTrigger value="settings" data-testid="profile-tab-settings"><Settings className="w-4 h-4 mr-2" />Настройки</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="works">
+          {loading ? (
+            <div className="text-center py-20 text-neutral-500">Загрузка...</div>
+          ) : works.length === 0 ? (
+            <EmptyState
+              title="Портфолио пока пустое"
+              text="Добавьте первый проект — он будет храниться здесь и появится в вашем публичном портфолио."
+              action={<Link to="/upload"><Button className="mt-6 rounded-full">Добавить работу</Button></Link>}
+            />
+          ) : (
+            <div className="masonry">
+              {works.map((d) => {
+                const st = STATUS_LABEL[d.status] || STATUS_LABEL.pending;
+                return (
+                  <div key={d.id} className="relative">
+                    <ProductCard design={d} onChange={() => load(user.id)} />
+                    <div className="mt-2 mb-4 flex items-center justify-between gap-2">
+                      <Badge variant={st.variant} className="rounded-full">{st.text}</Badge>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setEditTarget(d)} data-testid={`profile-edit-${d.id}`}>
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleDelete(d)} data-testid={`profile-delete-${d.id}`}>
+                          <Trash2 className="w-4 h-4 text-red-500" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="saved">
+          {loading ? (
+            <div className="text-center py-20 text-neutral-500">Загрузка...</div>
+          ) : saved.length === 0 ? (
+            <EmptyState
+              title="Мудборд пока пуст"
+              text="Сохраняйте работы, которые вас вдохновляют, — так растёт насмотренность."
+              action={<Link to="/explore"><Button className="mt-6 rounded-full">Открыть галерею</Button></Link>}
+            />
+          ) : (
+            <div className="masonry">
+              {saved.map((d) => <ProductCard key={d.id} design={d} onChange={() => load(user.id)} />)}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="settings">
+          <form onSubmit={handleSave} className="max-w-xl space-y-6" data-testid="profile-settings-form">
+            <div className="flex items-center gap-5">
+              <Avatar user={{ ...user, avatar_url: avatar }} size="w-20 h-20 text-2xl" />
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" className="rounded-full" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                  <Camera className="w-4 h-4 mr-2" />{uploading ? "Загрузка..." : "Сменить аватар"}
+                </Button>
+                {avatar && (
+                  <Button type="button" variant="ghost" className="rounded-full" onClick={() => setAvatar("")}>Убрать</Button>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-name">Имя</Label>
+              <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} required minLength={1} maxLength={80} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-bio">О себе</Label>
+              <Textarea id="profile-bio" value={bio} onChange={(e) => setBio(e.target.value)} rows={4} maxLength={500} />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input value={user.email} disabled />
+            </div>
+            <Button type="submit" className="rounded-full" disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
+          </form>
+        </TabsContent>
+      </Tabs>
+
+      <EditDesignDialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        design={editTarget}
+        onSaved={() => { setEditTarget(null); load(user.id); }}
+      />
+    </div>
   );
 }
