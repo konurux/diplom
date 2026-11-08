@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Heart, Eye, LayoutGrid, Link2 } from "@/components/icons";
 import { toast } from "sonner";
 import { api, fileUrl } from "../lib/api";
@@ -10,29 +10,39 @@ import useInfiniteDesigns from "../hooks/useInfiniteDesigns";
 import { Button } from "../components/ui/button";
 
 export default function Portfolio() {
-  const { id } = useParams();
+  // ref — username (/u/anna) или id из старых ссылок (/u/6af0…)
+  const { id: ref } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [author, setAuthor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const worksQuery = useMemo(() => ({ author_id: id, sort: "newest" }), [id]);
-  const { items: works, loadingMore, sentinelRef } = useInfiniteDesigns(worksQuery, { enabled: !!author && author.id === id });
+  const authorId = author?.id;
+  const worksQuery = useMemo(() => ({ author_id: authorId, sort: "newest" }), [authorId]);
+  const { items: works, loadingMore, sentinelRef } = useInfiniteDesigns(worksQuery, { enabled: !!authorId });
 
   useEffect(() => {
+    if (author && (ref === author.username || ref === author.id)) {
+      // старая ссылка по id → канонический адрес по username
+      if (author.username && ref !== author.username) navigate(`/u/${author.username}`, { replace: true });
+      return;
+    }
     (async () => {
       setLoading(true);
       setNotFound(false);
       setAuthor(null);
       try {
-        const a = await api.get(`/users/${id}`);
+        const a = await api.get(`/users/${encodeURIComponent(ref)}`);
         setAuthor(a.data);
+        if (a.data.username && ref !== a.data.username) navigate(`/u/${a.data.username}`, { replace: true });
       } catch {
         setNotFound(true);
       } finally {
         setLoading(false);
       }
     })();
-  }, [id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ref]);
 
   if (loading) return <div className="text-center py-20 text-neutral-500">Загрузка...</div>;
   if (notFound || !author) {
@@ -50,7 +60,7 @@ export default function Portfolio() {
 
   const copyLink = async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(`${window.location.origin}/u/${author.username || author.id}`);
       toast.success("Ссылка на портфолио скопирована");
     } catch {
       toast.error("Не удалось скопировать ссылку");

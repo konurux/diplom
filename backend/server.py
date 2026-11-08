@@ -1,4 +1,5 @@
 import hashlib
+import html
 import io
 import logging
 import os
@@ -203,6 +204,60 @@ def require_roles(*roles: str):
         return user
     return dep
 
+# ---------- Username (красивые ссылки /u/<username>) ----------
+USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$")
+RESERVED_USERNAMES = {
+    "admin", "api", "me", "u", "user", "users", "profile", "settings", "login", "logout",
+    "register", "explore", "trending", "favorites", "upload", "design", "designs", "pixvault",
+    "moderator", "support", "help", "about", "null", "undefined",
+}
+_TRANSLIT = dict(zip(
+    "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t",
+     "u", "f", "h", "ts", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"],
+))
+
+
+def slugify_username(text: str) -> str:
+    out = "".join(_TRANSLIT.get(ch, ch) for ch in (text or "").lower())
+    out = re.sub(r"[^a-z0-9]+", "-", out).strip("-")
+    out = re.sub(r"-{2,}", "-", out)[:24].strip("-")
+    return out if len(out) >= 3 else (out + "-designer").strip("-")
+
+
+def validate_username(value: str) -> str:
+    v = (value or "").strip().lower()
+    if not USERNAME_RE.match(v):
+        raise HTTPException(status_code=400, detail="Имя в ссылке: 3–30 символов, латиница, цифры и дефис, без дефиса по краям")
+    if v in RESERVED_USERNAMES:
+        raise HTTPException(status_code=400, detail="Это имя зарезервировано, выберите другое")
+    return v
+
+
+async def unique_username(base_text: str, exclude_id=None) -> str:
+    base = slugify_username(base_text)
+    if base in RESERVED_USERNAMES:
+        base = f"{base}-1"
+    candidate, n = base, 1
+    while True:
+        q = {"username": candidate}
+        if exclude_id is not None:
+            q["_id"] = {"$ne": exclude_id}
+        if not await db.users.find_one(q, {"_id": 1}):
+            return candidate
+        n += 1
+        candidate = f"{base[:26]}-{n}"
+
+
+async def find_user_by_ref(ref: str):
+    """Пользователь по username или (для старых ссылок) по ObjectId."""
+    if ObjectId.is_valid(ref):
+        u = await db.users.find_one({"_id": ObjectId(ref)})
+        if u:
+            return u
+    return await db.users.find_one({"username": ref.lower()})
+
+
 # ---------- Pydantic Models ----------
 class UserPublic(BaseModel):
     id: str
@@ -223,6 +278,7 @@ class LoginBody(BaseModel):
     password: str
 
 class UpdateProfileBody(BaseModel):
+    username: Optional[str] = None
     name: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -262,6 +318,7 @@ def now_iso() -> str:
 def serialize_user(u: dict) -> dict:
     return {
         "id": str(u.get("_id") or u.get("id")),
+        "username": u.get("username"),
         "email": u["email"],
         "name": u.get("name", ""),
         "role": u.get("role", "user"),
@@ -296,6 +353,7 @@ async def serialize_design(d: dict, current_user: Optional[dict] = None) -> dict
         "updated_at": d.get("updated_at"),
         "author": {
             "id": str(author["_id"]) if author else None,
+            "username": author.get("username") if author else None,
             "name": author.get("name") if author else "Аноним",
             "avatar_url": author.get("avatar_url") if author else None,
             "role": author.get("role") if author else "user",
@@ -313,6 +371,7 @@ async def register(body: RegisterBody, response: Response):
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
     doc = {
         "email": email,
+        "username": await unique_username(body.name.strip() or email.split("@")[0]),
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "role": "user",
@@ -368,14 +427,12 @@ async def refresh_token(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Недействительный токен")
 
 # ---------- Public portfolio ----------
-@api_router.get("/users/{user_id}")
-async def public_user(user_id: str):
-    try:
-        u = await db.users.find_one({"_id": ObjectId(user_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Неверный ID")
+@api_router.get("/users/{ref}")
+async def public_user(ref: str):
+    u = await find_user_by_ref(ref)
     if not u:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    user_id = str(u["_id"])
     designs = await db.designs.count_documents({"author_id": user_id, "status": "approved"})
     agg = await db.designs.aggregate([
         {"$match": {"author_id": user_id, "status": "approved"}},
@@ -384,6 +441,7 @@ async def public_user(user_id: str):
     totals = agg[0] if agg else {}
     return {
         "id": str(u["_id"]),
+        "username": u.get("username"),
         "name": u.get("name", ""),
         "role": u.get("role", "user"),
         "avatar_url": u.get("avatar_url"),
@@ -400,6 +458,13 @@ async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_us
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update:
         return user
+    if "username" in update:
+        update["username"] = validate_username(update["username"])
+        taken = await db.users.find_one({"username": update["username"], "_id": {"$ne": ObjectId(user["id"])}}, {"_id": 1})
+        if taken:
+            raise HTTPException(status_code=400, detail="Это имя уже занято")
+    if "name" in update and not update["name"].strip():
+        raise HTTPException(status_code=400, detail="Имя не может быть пустым")
     await db.users.update_one({"_id": ObjectId(user["id"])}, {"$set": update})
     old_avatar = user.get("avatar_url")
     if "avatar_url" in update and old_avatar and old_avatar != update["avatar_url"]:
@@ -831,6 +896,7 @@ async def admin_create_user(body: AdminCreateUserBody, _user: dict = Depends(req
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
     doc = {
         "email": email,
+        "username": await unique_username(body.name.strip() or email.split("@")[0]),
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "role": body.role,
@@ -899,6 +965,81 @@ async def admin_cleanup_files(dry_run: bool = True, current: dict = Depends(requ
         "freed_bytes": freed,
     }
 
+# ---------- Open Graph (превью ссылок в Telegram, VK, Slack и т.п.) ----------
+# Боты соцсетей не выполняют JavaScript, поэтому Vercel перенаправляет их сюда
+# (см. frontend/vercel.json), а людей — на обычное SPA.
+SITE_URL = os.environ.get("SITE_URL", "https://diplom-kappa-three.vercel.app").rstrip("/")
+OG_FALLBACK_IMAGE = f"{SITE_URL}/og-image.png"
+
+
+def public_api_base(request: Request) -> str:
+    explicit = os.environ.get("PUBLIC_API_URL", "").rstrip("/")
+    if explicit:
+        return explicit
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", request.url.netloc))
+    return f"{proto}://{host}"
+
+
+def og_page(title: str, description: str, url: str, image: str, kind: str = "website") -> StarletteResponse:
+    t, d, u, i = (html.escape(x or "", quote=True) for x in (title, description, url, image))
+    body = f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>{t}</title>
+<meta name="description" content="{d}">
+<link rel="canonical" href="{u}">
+<meta property="og:site_name" content="PixVault">
+<meta property="og:type" content="{kind}">
+<meta property="og:title" content="{t}">
+<meta property="og:description" content="{d}">
+<meta property="og:url" content="{u}">
+<meta property="og:image" content="{i}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{t}">
+<meta name="twitter:description" content="{d}">
+<meta name="twitter:image" content="{i}">
+<meta http-equiv="refresh" content="0; url={u}">
+</head><body><a href="{u}">{t}</a></body></html>"""
+    return StarletteResponse(content=body, media_type="text/html; charset=utf-8",
+                             headers={"Cache-Control": "public, max-age=600"})
+
+
+def short(text: str, limit: int = 180) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+@api_router.get("/og/u/{ref}")
+async def og_portfolio(ref: str, request: Request):
+    u = await find_user_by_ref(ref)
+    if not u:
+        return og_page("PixVault", "Digital Asset & Portfolio Platform", SITE_URL, OG_FALLBACK_IMAGE)
+    uid = str(u["_id"])
+    count = await db.designs.count_documents({"author_id": uid, "status": "approved"})
+    latest = await db.designs.find_one({"author_id": uid, "status": "approved", "images.0": {"$exists": True}}, sort=[("created_at", -1)])
+    api_base = public_api_base(request)
+    if latest:
+        image = f"{api_base}/api/files/{latest['images'][0]}?w=1280"
+    elif u.get("avatar_url"):
+        image = f"{api_base}/api/files/{u['avatar_url']}?w=640"
+    else:
+        image = OG_FALLBACK_IMAGE
+    name = u.get("name") or u.get("username")
+    desc = short(u.get("bio") or "") or f"{count} работ в портфолио на PixVault"
+    return og_page(f"{name} — портфолио на PixVault", desc, f"{SITE_URL}/u/{u.get('username') or uid}", image, "profile")
+
+
+@api_router.get("/og/design/{design_id}")
+async def og_design(design_id: str, request: Request):
+    d = await db.designs.find_one({"_id": ObjectId(design_id)}) if ObjectId.is_valid(design_id) else None
+    if not d or d.get("status") != "approved":
+        return og_page("PixVault", "Digital Asset & Portfolio Platform", SITE_URL, OG_FALLBACK_IMAGE)
+    author = await db.users.find_one({"_id": ObjectId(d["author_id"])}) if d.get("author_id") else None
+    image = f"{public_api_base(request)}/api/files/{d['images'][0]}?w=1280" if d.get("images") else OG_FALLBACK_IMAGE
+    by = f" — {author.get('name')}" if author else ""
+    return og_page(f"{d['title']}{by} | PixVault", short(d.get("description")), f"{SITE_URL}/design/{design_id}", image, "article")
+
+
 # ---------- Stats ----------
 @api_router.get("/stats")
 async def stats():
@@ -919,6 +1060,11 @@ app.include_router(api_router)
 async def startup():
     # Indexes
     await db.users.create_index("email", unique=True)
+    # Заполняем username у старых аккаунтов, затем включаем уникальность
+    async for u in db.users.find({"$or": [{"username": {"$exists": False}}, {"username": None}]}):
+        uname = await unique_username(u.get("name") or u["email"].split("@")[0], exclude_id=u["_id"])
+        await db.users.update_one({"_id": u["_id"]}, {"$set": {"username": uname}})
+    await db.users.create_index("username", unique=True, partialFilterExpression={"username": {"$type": "string"}})
     await db.designs.create_index([("status", 1), ("created_at", -1)])
     await db.designs.create_index([("author_id", 1)])
     await db.designs.create_index([("category", 1), ("styles", 1)])
@@ -950,6 +1096,7 @@ async def startup():
     else:
         await db.users.insert_one({
             "email": admin_email,
+            "username": await unique_username("admin-pixvault"),
             "name": "Администратор",
             "password_hash": hash_password(admin_password),
             "role": "admin",

@@ -51,6 +51,7 @@ export default function Profile() {
   const [editTarget, setEditTarget] = useState(null);
 
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
   const [avatar, setAvatar] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -80,6 +81,7 @@ export default function Profile() {
       return;
     }
     setName(user.name || "");
+    setUsername(user.username || "");
     setBio(user.bio || "");
     setAvatar(user.avatar_url || null);
     load(user.id);
@@ -111,7 +113,7 @@ export default function Profile() {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.patch("/users/me", { name: name.trim(), bio, avatar_url: avatar });
+      await api.patch("/users/me", { name: name.trim(), username: username.replace(/^-+|-+$/g, ""), bio, avatar_url: avatar });
       await refreshUser();
       toast.success("Профиль сохранён");
     } catch (err) {
@@ -149,7 +151,7 @@ export default function Profile() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link to={`/u/${user.id}`}>
+          <Link to={`/u/${user.username || user.id}`}>
             <Button variant="outline" className="rounded-full" data-testid="profile-public-link"><Eye className="w-4 h-4 mr-2" />Публичное портфолио</Button>
           </Link>
           <Link to="/upload">
@@ -231,6 +233,25 @@ export default function Profile() {
             <div className="space-y-2">
               <Label htmlFor="profile-name">Имя</Label>
               <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} required minLength={1} maxLength={80} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-username">Адрес портфолио</Label>
+              <div className="flex items-center rounded-xl border border-input bg-background focus-within:ring-2 focus-within:ring-ring overflow-hidden">
+                <span className="pl-3 pr-0.5 text-sm text-neutral-500 whitespace-nowrap select-none">{window.location.host}/u/</span>
+                <input
+                  id="profile-username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 30))}
+                  required
+                  minLength={3}
+                  maxLength={30}
+                  pattern="[a-z0-9](?:[a-z0-9\-]{1,28}[a-z0-9])"
+                  title="3–30 символов: латиница, цифры и дефис, без дефиса по краям"
+                  className="flex-1 min-w-0 h-10 pr-3 bg-transparent text-sm outline-none"
+                  data-testid="profile-username-input"
+                />
+              </div>
+              <p className="text-xs text-neutral-500">Латиница, цифры и дефис. Старые ссылки продолжат работать.</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-bio">О себе</Label>

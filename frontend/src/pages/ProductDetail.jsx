@@ -139,7 +139,7 @@ export default function ProductDetail() {
               </Avatar>
               <div>
                 {design.author?.id ? (
-                  <Link to={`/u/${design.author.id}`} className="font-medium text-sm hover:text-brand transition-colors" data-testid="author-name">{design.author?.name}</Link>
+                  <Link to={`/u/${design.author.username || design.author.id}`} className="font-medium text-sm hover:text-brand transition-colors" data-testid="author-name">{design.author?.name}</Link>
                 ) : (
                   <div className="font-medium text-sm" data-testid="author-name">{design.author?.name}</div>
                 )}

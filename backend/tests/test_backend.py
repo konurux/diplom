@@ -426,6 +426,52 @@ class TestFileCleanup:
         assert s.post(f"{API}/admin/files/cleanup", timeout=10).status_code == 403
 
 
+# -------- Usernames & Open Graph ----------
+class TestUsernamesAndOG:
+    def test_register_assigns_transliterated_username(self):
+        email = f"test_ru_{uuid.uuid4().hex[:8]}@example.com"
+        r = requests.post(f"{API}/auth/register", json={"email": email, "password": "testpass123", "name": "Анна Смирнова"}, timeout=10)
+        assert r.status_code == 200
+        assert r.json()["username"].startswith("anna-smirnova")
+
+    def test_lookup_by_username_and_id(self, user_account):
+        _, me, _, _ = user_account
+        by_name = requests.get(f"{API}/users/{me['username']}", timeout=10)
+        by_id = requests.get(f"{API}/users/{me['id']}", timeout=10)
+        assert by_name.status_code == by_id.status_code == 200
+        assert by_name.json()["id"] == by_id.json()["id"] == me["id"]
+
+    def test_change_username_validation(self, user_account, user2_account):
+        s, me, _, _ = user_account
+        _, other, _, _ = user2_account
+        new = f"designer-{uuid.uuid4().hex[:6]}"
+        r = s.patch(f"{API}/users/me", json={"username": new.upper()}, timeout=10)
+        assert r.status_code == 200 and r.json()["username"] == new
+        assert requests.get(f"{API}/users/{new}", timeout=10).json()["id"] == me["id"]
+        for bad in ("ab", "-start", "end-", "имя", "has space", "admin"):
+            assert s.patch(f"{API}/users/me", json={"username": bad}, timeout=10).status_code == 400, bad
+        assert s.patch(f"{API}/users/me", json={"username": other["username"]}, timeout=10).status_code == 400
+
+    def test_og_portfolio_html(self, user_account):
+        _, me, _, _ = user_account
+        uname = requests.get(f"{API}/users/{me['id']}", timeout=10).json()["username"]
+        r = requests.get(f"{API}/og/u/{me['id']}", timeout=10)
+        assert r.status_code == 200 and r.headers["Content-Type"].startswith("text/html")
+        assert 'property="og:title"' in r.text and "PixVault" in r.text
+        assert f"/u/{uname}\"" in r.text, "og:url должен вести на адрес с username"
+
+    def test_og_unknown_falls_back(self):
+        r = requests.get(f"{API}/og/design/000000000000000000000000", timeout=10)
+        assert r.status_code == 200 and "og-image.png" in r.text
+
+    def test_og_escapes_html(self, user_account):
+        s, me, _, _ = user_account
+        s.patch(f"{API}/users/me", json={"name": '<script>alert(1)</script>'}, timeout=10)
+        r = requests.get(f"{API}/og/u/{me['id']}", timeout=10)
+        assert "<script>alert(1)</script>" not in r.text
+        s.patch(f"{API}/users/me", json={"name": "TEST User"}, timeout=10)
+
+
 # -------- Purchases removed / Security ----------
 class TestRemovedAndSecurity:
     def test_purchase_endpoints_removed(self, user_account):
