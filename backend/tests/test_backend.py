@@ -1,17 +1,25 @@
-"""Dezi Market backend API tests — iteration 2 (styles[] + external_url + admin user CRUD)."""
+"""PixVault backend API tests (интеграционные: работают против запущенного сервера).
+
+Запуск:
+    TEST_API_URL=http://127.0.0.1:8000 \
+    TEST_ADMIN_EMAIL=... TEST_ADMIN_PASSWORD=... \
+    pytest backend/tests -q
+
+Модератор создаётся тестами через админа и удаляется в конце.
+"""
 import os
 import io
 import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
+BASE_URL = os.environ.get("TEST_API_URL", os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000")).rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admindezi@gmail.com"
-ADMIN_PASSWORD = "admin123"
-MOD_EMAIL = "moderatordezi@gmail.com"
-MOD_PASSWORD = "moder123"
+ADMIN_EMAIL = os.environ.get("TEST_ADMIN_EMAIL", "")
+ADMIN_PASSWORD = os.environ.get("TEST_ADMIN_PASSWORD", "")
+MOD_EMAIL = f"test_moderator_{uuid.uuid4().hex[:8]}@example.com"
+MOD_PASSWORD = "moderpass123"
 
 
 def _login(email, password):
@@ -38,11 +46,19 @@ def _register(name_prefix="TEST_user"):
 
 @pytest.fixture(scope="session")
 def admin():
+    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+        pytest.skip("Задайте TEST_ADMIN_EMAIL и TEST_ADMIN_PASSWORD")
     return _login(ADMIN_EMAIL, ADMIN_PASSWORD)
 
 
 @pytest.fixture(scope="session")
-def moderator():
+def moderator(admin):
+    s, _ = admin
+    r = s.post(f"{API}/admin/users", json={
+        "email": MOD_EMAIL, "password": MOD_PASSWORD, "name": "TEST Moderator", "role": "moderator",
+    }, timeout=10)
+    assert r.status_code == 200, r.text
+    pytest.moderator_id = r.json()["id"]
     return _login(MOD_EMAIL, MOD_PASSWORD)
 
 
@@ -63,8 +79,6 @@ def _payload(**over):
         "category": "ui-kit",
         "styles": ["minimalism"],
         "external_url": "https://example.com/design/" + uuid.uuid4().hex[:6],
-        "price": 0.0,
-        "is_free": True,
         "tags": ["test", "ui"],
         "images": [],
     }
@@ -211,25 +225,41 @@ class TestDesigns:
             assert isinstance(d["styles"], list)
             assert "external_url" in d
 
-    def test_list_paid_filter(self, admin):
+    def test_no_price_fields(self, admin):
+        """Покупки удалены: цена из запроса игнорируется и не возвращается."""
         s, _ = admin
-        r = s.post(f"{API}/designs", json=_payload(
-            title="TEST Paid", category="mockup", styles=["modern"],
-            price=99.0, is_free=False,
-        ), timeout=15)
+        r = s.post(f"{API}/designs", json=_payload(title="TEST NoPrice", price=99.0, is_free=False), timeout=15)
         assert r.status_code == 200
-        pytest.paid_design_id = r.json()["id"]
+        d = r.json()
+        pytest.noprice_design_id = d["id"]
+        assert "price" not in d and "is_free" not in d
 
-        r = requests.get(f"{API}/designs", params={"price": "paid"}, timeout=10)
+    def test_view_counted_once_per_viewer(self):
+        ua_a = {"User-Agent": "pytest-viewer-" + uuid.uuid4().hex}
+        ua_b = {"User-Agent": "pytest-viewer-" + uuid.uuid4().hex}
+        url = f"{API}/designs/{pytest.admin_design_id}"
+        v1 = requests.get(url, headers=ua_a, timeout=10).json()["views_count"]
+        v2 = requests.get(url, headers=ua_a, timeout=10).json()["views_count"]
+        assert v2 == v1, "повторный просмотр тем же зрителем не должен считаться"
+        v3 = requests.get(url, headers=ua_b, timeout=10).json()["views_count"]
+        assert v3 == v1 + 1
+
+    def test_author_sees_own_pending_with_status_all(self, user_account):
+        s, me, _, _ = user_account
+        r = s.get(f"{API}/designs", params={"author_id": me["id"], "status": "all"}, timeout=10)
         assert r.status_code == 200
-        assert all(not d["is_free"] for d in r.json())
+        assert any(d["status"] == "pending" for d in r.json())
+        # чужие неодобренные работы через status=all не видны
+        r = requests.get(f"{API}/designs", params={"author_id": me["id"], "status": "all"}, timeout=10)
+        assert all(d["status"] == "approved" for d in r.json())
 
-    def test_get_design_increments_view(self):
-        r1 = requests.get(f"{API}/designs/{pytest.admin_design_id}", timeout=10)
-        assert r1.status_code == 200
-        v1 = r1.json()["views_count"]
-        r2 = requests.get(f"{API}/designs/{pytest.admin_design_id}", timeout=10)
-        assert r2.json()["views_count"] == v1 + 1
+    def test_public_portfolio(self, user_account):
+        _, me, _, _ = user_account
+        r = requests.get(f"{API}/users/{me['id']}", timeout=10)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["id"] == me["id"] and "designs_count" in d
+        assert "email" not in d, "публичный профиль не должен раскрывать email"
 
     def test_owner_edit_resets_to_pending(self, user_account, admin):
         s_admin, _ = admin
@@ -289,20 +319,32 @@ class TestInteractions:
         assert r.status_code == 200
 
 
-# -------- Purchase / Download (MOCKED purchase) ----------
-class TestDownloadPurchase:
-    def test_paid_requires_purchase(self, user_account):
+# -------- Purchases removed / Security ----------
+class TestRemovedAndSecurity:
+    def test_purchase_endpoints_removed(self, user_account):
         s, _, _, _ = user_account
-        r = s.post(f"{API}/designs/{pytest.paid_design_id}/download", timeout=10)
-        assert r.status_code == 402
+        did = pytest.admin_design_id
+        assert s.post(f"{API}/designs/{did}/purchase", timeout=10).status_code == 404
+        assert s.post(f"{API}/designs/{did}/download", timeout=10).status_code == 404
+        assert s.get(f"{API}/purchases", timeout=10).status_code == 404
 
-    def test_purchase_then_download(self, user_account):
+    def test_cors_allows_localhost(self):
+        r = requests.options(f"{API}/auth/login", headers={
+            "Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"}, timeout=10)
+        assert r.status_code == 204
+        assert r.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
+
+    def test_cors_rejects_foreign_origin(self):
+        r = requests.options(f"{API}/auth/login", headers={
+            "Origin": "https://evil.vercel.app", "Access-Control-Request-Method": "POST"}, timeout=10)
+        assert r.status_code == 403
+        assert "Access-Control-Allow-Origin" not in r.headers
+
+    def test_csrf_blocks_foreign_post(self, user_account):
         s, _, _, _ = user_account
-        r = s.post(f"{API}/designs/{pytest.paid_design_id}/purchase", timeout=10)
-        assert r.status_code == 200
-        assert r.json()["status"] == "completed"
-        r = s.post(f"{API}/designs/{pytest.paid_design_id}/download", timeout=10)
-        assert r.status_code == 200
+        r = s.post(f"{API}/designs/{pytest.admin_design_id}/like",
+                   headers={"Origin": "https://evil.example.com"}, timeout=10)
+        assert r.status_code == 403
 
 
 # -------- Admin: list users / role ----------
@@ -469,7 +511,10 @@ class TestUpload:
 class TestCleanup:
     def test_cleanup_designs(self, admin):
         s, _ = admin
-        for attr in ("admin_design_id", "paid_design_id", "user_design_id", "multi_design_id"):
+        for attr in ("admin_design_id", "noprice_design_id", "user_design_id", "multi_design_id"):
             did = getattr(pytest, attr, None)
             if did:
                 s.delete(f"{API}/designs/{did}", timeout=10)
+        mid = getattr(pytest, "moderator_id", None)
+        if mid:
+            s.delete(f"{API}/admin/users/{mid}", timeout=10)

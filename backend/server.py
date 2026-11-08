@@ -1,6 +1,8 @@
+import hashlib
 import io
 import logging
 import os
+import re
 
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -26,7 +28,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-import requests
+from pymongo.errors import DuplicateKeyError
 from starlette.responses import Response as StarletteResponse  # Тот самый важный импорт!
 
 APP_NAME = "dezi"
@@ -47,40 +49,49 @@ db = client[os.environ["DB_NAME"]]
 app = FastAPI(title="PixVault API", description="Digital Asset & Portfolio Platform")
 api_router = APIRouter(prefix="/api")
 
-# ---------- АБСОЛЮТНЫЙ ПЕРЕХВАТЧИК OPTIONS (ASGI УРОВЕНЬ) ----------
-@app.middleware("http")
-async def catch_options_preflight(request: Request, call_next):
-    origin = request.headers.get("Origin", "")
-    
-    # Проверяем, что запрос идет с твоего фронтенда Vercel или локалки
-    allowed_origin = None
-    if origin:
-        if (
-            "vercel.app" in origin 
-            or "localhost" in origin 
-            or "127.0.0.1" in origin
-        ):
-            allowed_origin = origin
-        else:
-            # Дефолтный домен на случай, если Origin пустой
-            allowed_origin = "https://diplom-kappa-three.vercel.app"
-    else:
-        allowed_origin = "https://diplom-kappa-three.vercel.app"
+# ---------- CORS + защита от CSRF ----------
+# Разрешённые фронтенды задаются через ALLOWED_ORIGINS (через запятую).
+# Пример для Render: ALLOWED_ORIGINS=https://diplom-kappa-three.vercel.app
+DEFAULT_ORIGINS = "https://diplom-kappa-three.vercel.app"
+ALLOWED_ORIGINS = {
+    o.strip().rstrip("/")
+    for o in os.environ.get("ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",")
+    if o.strip()
+}
+LOCAL_ORIGIN_RE = re.compile(r"^http://(localhost|127\.0\.0\.1)(:\d+)?$")
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
-    # Если это предзапрос OPTIONS
+
+def is_allowed_origin(origin: str) -> bool:
+    return origin in ALLOWED_ORIGINS or bool(LOCAL_ORIGIN_RE.match(origin))
+
+
+@app.middleware("http")
+async def cors_and_csrf(request: Request, call_next):
+    origin = request.headers.get("Origin", "").rstrip("/")
+    allowed = bool(origin) and is_allowed_origin(origin)
+
     if request.method == "OPTIONS":
-        response = StarletteResponse(status_code=204)
-        response.headers["Access-Control-Allow-Origin"] = allowed_origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
-        response.headers["Access-Control-Max-Age"] = "86400"
+        response = StarletteResponse(status_code=204 if allowed else 403)
+        if allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With"
+            response.headers["Access-Control-Max-Age"] = "86400"
+            response.headers["Vary"] = "Origin"
         return response
-    
-    # Для основных запросов (GET, POST, PATCH и т.д.)
+
+    # Браузер всегда присылает Origin в кросс-доменных изменяющих запросах.
+    # Чужой сайт не должен выполнять действия от имени вошедшего пользователя.
+    if origin and not allowed and request.method not in SAFE_METHODS:
+        return StarletteResponse(status_code=403, content="Origin not allowed")
+
     response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = allowed_origin
-    response.headers["Access-Control-Allow-Credentials"] = "true"
+    if allowed:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
     return response
 
 JWT_ALGORITHM = "HS256"
@@ -516,6 +527,31 @@ async def trending(request: Request):
     cursor = db.designs.find({"status": "approved"}).sort([("likes_count", -1), ("views_count", -1)]).limit(12)
     return [await serialize_design(d, current) async for d in cursor]
 
+def viewer_key(request: Request, current: Optional[dict]) -> str:
+    if current:
+        return "u:" + current["id"]
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+    ua = request.headers.get("User-Agent", "")
+    # Сырые IP не храним — только хэш
+    return "a:" + hashlib.sha256(f"{ip}|{ua}".encode()).hexdigest()[:32]
+
+
+async def register_view(design_id: str, request: Request, current: Optional[dict]) -> bool:
+    """True, если это первый просмотр этим зрителем за текущие сутки (UTC)."""
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        await db.views.insert_one({
+            "design_id": design_id,
+            "viewer": viewer_key(request, current),
+            "day": day,
+            "created_at": datetime.now(timezone.utc),
+        })
+        return True
+    except DuplicateKeyError:
+        return False
+
+
 @api_router.get("/designs/{design_id}")
 async def get_design(design_id: str, request: Request):
     current = await get_optional_user(request)
@@ -528,8 +564,9 @@ async def get_design(design_id: str, request: Request):
     if d.get("status") != "approved":
         if not current or (current.get("role") not in ("admin", "moderator") and current["id"] != d["author_id"]):
             raise HTTPException(status_code=403, detail="Нет доступа")
-    await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"views_count": 1}})
-    d["views_count"] = d.get("views_count", 0) + 1
+    if await register_view(design_id, request, current):
+        await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"views_count": 1}})
+        d["views_count"] = d.get("views_count", 0) + 1
     return await serialize_design(d, current)
 
 @api_router.patch("/designs/{design_id}")
@@ -752,12 +789,29 @@ async def startup():
     await db.favorites.create_index([("user_id", 1), ("design_id", 1)], unique=True)
     await db.likes.create_index([("user_id", 1), ("design_id", 1)], unique=True)
     await db.comments.create_index([("design_id", 1), ("created_at", -1)])
+    await db.views.create_index([("design_id", 1), ("viewer", 1), ("day", 1)], unique=True)
+    await db.views.create_index("created_at", expireAfterSeconds=3 * 24 * 3600)
 
     # Seed admin
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@dezi.ru")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin12345")
+    # Админ создаётся только если заданы ADMIN_EMAIL и ADMIN_PASSWORD.
+    # Пароль из окружения — источник истины: смена ADMIN_PASSWORD меняет пароль при старте.
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    if not admin_email or not admin_password:
+        logger.warning("ADMIN_EMAIL/ADMIN_PASSWORD не заданы — администратор не создаётся.")
+        return
+    if len(admin_password) < 10:
+        logger.error("ADMIN_PASSWORD короче 10 символов — администратор не создаётся/не обновляется.")
+        return
     existing = await db.users.find_one({"email": admin_email})
-    if not existing:
+    if existing:
+        if not verify_password(admin_password, existing.get("password_hash", "")):
+            await db.users.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"password_hash": hash_password(admin_password), "role": "admin"}},
+            )
+            logger.info("Пароль администратора обновлён из ADMIN_PASSWORD.")
+    else:
         await db.users.insert_one({
             "email": admin_email,
             "name": "Администратор",

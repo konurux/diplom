@@ -89,3 +89,4 @@ credentials.json
 
 # Local tooling
 .claude/
+!.env.example
