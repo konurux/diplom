@@ -163,6 +163,8 @@ export default function Admin() {
         <StatCard icon={<UsersIcon />} label="Пользователей" value={stats.users} color="bg-brand-2" />
       </div>
 
+      {isAdmin && <StorageCleanup />}
+
       <Tabs defaultValue="pending" className="w-full">
         <TabsList className="rounded-full flex-wrap h-auto" data-testid="admin-tabs">
           <TabsTrigger value="pending" className="rounded-full gap-2" data-testid="tab-pending">
@@ -316,5 +318,63 @@ function CreateUserDialog({ open, onClose, onCreated }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} КБ`;
+  return `${(n / 1024 / 1024).toFixed(1)} МБ`;
+}
+
+function StorageCleanup() {
+  const [report, setReport] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async (dryRun) => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/files/cleanup", null, { params: { dry_run: dryRun } });
+      setReport(data);
+      if (!dryRun) toast.success(`Освобождено ${formatBytes(data.freed_bytes)}`);
+    } catch (err) {
+      toast.error(formatApiErrorDetail(err.response?.data?.detail));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const found = report && report.dry_run ? report.orphan_files : 0;
+
+  return (
+    <div className="mb-10 p-5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center gap-4" data-testid="storage-cleanup">
+      <div className="flex-1">
+        <div className="font-medium">Хранилище файлов</div>
+        <div className="text-sm text-neutral-500">
+          {!report
+            ? "Найдите картинки, которые не используются ни в одной работе или аватаре (старше часа)."
+            : report.dry_run
+              ? found > 0
+                ? `Найдено ${found} неиспользуемых файлов — ${formatBytes(report.orphan_bytes)}.`
+                : "Неиспользуемых файлов нет."
+              : `Удалено. Освобождено ${formatBytes(report.freed_bytes)}.`}
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="outline" className="rounded-full" disabled={busy} onClick={() => run(true)} data-testid="cleanup-scan">
+          Проверить
+        </Button>
+        {found > 0 && (
+          <Button
+            className="rounded-full bg-red-500 hover:bg-red-600 text-white"
+            disabled={busy}
+            onClick={() => window.confirm(`Удалить ${found} файлов без возможности восстановления?`) && run(false)}
+            data-testid="cleanup-run"
+          >
+            <Trash2 className="w-4 h-4 mr-1.5" />Удалить
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }

@@ -353,6 +353,79 @@ class TestImagesAndPaging:
         assert not ids1 & ids2
 
 
+# -------- File cleanup ----------
+def _upload(session):
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (900, 600), (198, 242, 62)).save(buf, "PNG")
+    buf.seek(0)
+    r = session.post(f"{API}/upload", files={"file": ("f.png", buf, "image/png")}, timeout=20)
+    assert r.status_code == 200, r.text
+    return r.json()["path"]
+
+
+def _file_status(path, w=None):
+    params = {"w": w} if w else None
+    return requests.get(f"{API}/files/{path}", params=params, timeout=20).status_code
+
+
+class TestFileCleanup:
+    def test_delete_design_removes_files_and_thumbs(self, user_account):
+        s, _, _, _ = user_account
+        path = _upload(s)
+        r = s.post(f"{API}/designs", json=_payload(images=[path]), timeout=15)
+        assert r.status_code == 200
+        did = r.json()["id"]
+        assert _file_status(path, 640) == 200  # создаём превью
+        assert s.delete(f"{API}/designs/{did}", timeout=10).status_code == 200
+        assert _file_status(path) == 404
+        assert _file_status(path, 640) == 404
+
+    def test_cannot_delete_foreign_file_via_own_design(self, user_account, user2_account):
+        s1, _, _, _ = user_account
+        s2, _, _, _ = user2_account
+        victim = _upload(s1)
+        r = s1.post(f"{API}/designs", json=_payload(images=[victim]), timeout=15)
+        victim_design = r.json()["id"]
+        # второй пользователь ссылается на чужой файл и удаляет свою работу
+        r = s2.post(f"{API}/designs", json=_payload(images=[victim]), timeout=15)
+        assert s2.delete(f"{API}/designs/{r.json()['id']}", timeout=10).status_code == 200
+        assert _file_status(victim) == 200, "чужой файл не должен удаляться"
+        s1.delete(f"{API}/designs/{victim_design}", timeout=10)
+        assert _file_status(victim) == 404
+
+    def test_patch_removing_image_deletes_it(self, user_account):
+        s, _, _, _ = user_account
+        keep, drop = _upload(s), _upload(s)
+        r = s.post(f"{API}/designs", json=_payload(images=[keep, drop]), timeout=15)
+        did = r.json()["id"]
+        r = s.patch(f"{API}/designs/{did}", json={"images": [keep]}, timeout=15)
+        assert r.status_code == 200
+        assert _file_status(drop) == 404
+        assert _file_status(keep) == 200
+        s.delete(f"{API}/designs/{did}", timeout=10)
+
+    def test_avatar_change_deletes_old_avatar(self, user_account):
+        s, _, _, _ = user_account
+        a1, a2 = _upload(s), _upload(s)
+        assert s.patch(f"{API}/users/me", json={"avatar_url": a1}, timeout=10).status_code == 200
+        assert s.patch(f"{API}/users/me", json={"avatar_url": a2}, timeout=10).status_code == 200
+        assert _file_status(a1) == 404
+        assert _file_status(a2) == 200
+
+    def test_cleanup_keeps_fresh_uploads(self, admin):
+        s, _ = admin
+        fresh = _upload(s)  # ещё не прикреплён к работе, но моложе часа
+        r = s.post(f"{API}/admin/files/cleanup", params={"dry_run": "false"}, timeout=60)
+        assert r.status_code == 200
+        assert {"orphan_files", "freed_bytes"} <= r.json().keys()
+        assert _file_status(fresh) == 200
+
+    def test_cleanup_admin_only(self, user_account):
+        s, _, _, _ = user_account
+        assert s.post(f"{API}/admin/files/cleanup", timeout=10).status_code == 403
+
+
 # -------- Purchases removed / Security ----------
 class TestRemovedAndSecurity:
     def test_purchase_endpoints_removed(self, user_account):

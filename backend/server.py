@@ -401,6 +401,9 @@ async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_us
     if not update:
         return user
     await db.users.update_one({"_id": ObjectId(user["id"])}, {"$set": update})
+    old_avatar = user.get("avatar_url")
+    if "avatar_url" in update and old_avatar and old_avatar != update["avatar_url"]:
+        await release_files([old_avatar], user["id"])
     fresh = await db.users.find_one({"_id": ObjectId(user["id"])})
     return serialize_user(fresh)
 
@@ -483,6 +486,49 @@ async def get_file(path: str, w: Optional[int] = Query(None)):
     if not found:
         raise HTTPException(status_code=404, detail="Файл не найден")
     return Response(content=found[0], media_type=found[1], headers=FILE_CACHE_HEADERS)
+
+# ---------- Очистка файлов ----------
+UPLOAD_PREFIX = f"{APP_NAME}/uploads/"
+ORPHAN_GRACE = timedelta(hours=1)  # свежие загрузки ещё могут прикрепить к форме
+
+
+def base_file_name(name: str) -> str:
+    """dezi/uploads/u/x.png@w640.webp -> dezi/uploads/u/x.png"""
+    return name.split("@w", 1)[0]
+
+
+async def is_file_referenced(path: str) -> bool:
+    if await db.designs.find_one({"images": path}, {"_id": 1}):
+        return True
+    return bool(await db.users.find_one({"avatar_url": path}, {"_id": 1}))
+
+
+async def delete_stored_file(path: str) -> int:
+    """Удаляет оригинал и все его превью из GridFS. Возвращает освобождённые байты."""
+    fs = AsyncIOMotorGridFSBucket(db)
+    names = [path] + [f"{path}@w{w}.webp" for w in THUMB_WIDTHS]
+    freed = 0
+    async for f in db.fs.files.find({"filename": {"$in": names}}, {"_id": 1, "length": 1}):
+        await fs.delete(f["_id"])
+        freed += f.get("length", 0)
+    await db.files.delete_many({"storage_path": path})
+    return freed
+
+
+async def release_files(paths, owner_id: str) -> int:
+    """Удаляет файлы владельца, на которые больше никто не ссылается.
+
+    Путь должен лежать в папке владельца: images приходят от клиента, и без этой
+    проверки можно было бы удалить чужой файл, сославшись на него в своей работе.
+    """
+    freed = 0
+    prefix = f"{UPLOAD_PREFIX}{owner_id}/"
+    for p in {p for p in (paths or []) if isinstance(p, str)}:
+        if not p.startswith(prefix) or await is_file_referenced(p):
+            continue
+        freed += await delete_stored_file(p)
+    return freed
+
 
 # ---------- Designs ----------
 @api_router.post("/designs")
@@ -634,6 +680,9 @@ async def update_design(design_id: str, body: DesignUpdate, user: dict = Depends
     if not is_staff and is_owner:
         update.setdefault("status", "pending")
     await db.designs.update_one({"_id": d["_id"]}, {"$set": update})
+    if "images" in update:
+        removed = set(d.get("images", [])) - set(update["images"])
+        await release_files(removed, d["author_id"])
     fresh = await db.designs.find_one({"_id": d["_id"]})
     return await serialize_design(fresh, user)
 
@@ -651,6 +700,7 @@ async def delete_design(design_id: str, user: dict = Depends(get_current_user)):
     await db.comments.delete_many({"design_id": design_id})
     await db.favorites.delete_many({"design_id": design_id})
     await db.likes.delete_many({"design_id": design_id})
+    await release_files(d.get("images", []), d["author_id"])
     return {"ok": True}
 
 @api_router.post("/designs/{design_id}/moderate")
@@ -802,12 +852,52 @@ async def admin_delete_user(user_id: str, current: dict = Depends(require_roles(
         raise HTTPException(status_code=400, detail="Неверный ID")
     if not target:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    designs = await db.designs.find({"author_id": user_id}, {"_id": 1, "images": 1}).to_list(None)
+    design_ids = [str(x["_id"]) for x in designs]
+    owned = [f["storage_path"] async for f in db.files.find({"owner_id": user_id}, {"storage_path": 1})]
+    paths = owned + [p for x in designs for p in x.get("images", [])] + [target.get("avatar_url")]
+
     await db.users.delete_one({"_id": ObjectId(user_id)})
     await db.designs.delete_many({"author_id": user_id})
-    await db.comments.delete_many({"user_id": user_id})
-    await db.favorites.delete_many({"user_id": user_id})
-    await db.likes.delete_many({"user_id": user_id})
+    await db.comments.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await db.favorites.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await db.likes.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await release_files(paths, user_id)
     return {"ok": True}
+
+
+@api_router.post("/admin/files/cleanup")
+async def admin_cleanup_files(dry_run: bool = True, current: dict = Depends(require_roles("admin"))):
+    """Удаляет загруженные файлы, на которые не ссылается ни одна работа или аватар.
+
+    dry_run=true (по умолчанию) — только посчитать. Файлы моложе часа не трогаем.
+    """
+    cutoff = datetime.now(timezone.utc) - ORPHAN_GRACE
+    sizes: dict = {}
+    async for f in db.fs.files.find({"filename": {"$regex": f"^{re.escape(UPLOAD_PREFIX)}"}}, {"filename": 1, "length": 1, "uploadDate": 1}):
+        base = base_file_name(f["filename"])
+        uploaded = f.get("uploadDate")
+        if uploaded and uploaded.replace(tzinfo=timezone.utc) > cutoff:
+            sizes[base] = None  # есть свежая версия — пропускаем всю группу
+            continue
+        if base in sizes and sizes[base] is None:
+            continue
+        sizes[base] = sizes.get(base, 0) + f.get("length", 0)
+    orphans = []
+    for base, size in sizes.items():
+        if size is None or await is_file_referenced(base):
+            continue
+        orphans.append((base, size))
+    freed = 0
+    if not dry_run:
+        for base, _ in orphans:
+            freed += await delete_stored_file(base)
+    return {
+        "dry_run": dry_run,
+        "orphan_files": len(orphans),
+        "orphan_bytes": sum(sz for _, sz in orphans),
+        "freed_bytes": freed,
+    }
 
 # ---------- Stats ----------
 @api_router.get("/stats")
