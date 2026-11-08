@@ -973,14 +973,16 @@ OG_FALLBACK_IMAGE = f"{SITE_URL}/og-image.png"
 
 
 def public_api_base(request: Request) -> str:
-    explicit = os.environ.get("PUBLIC_API_URL", "").rstrip("/")
+    """Публичный адрес бэкенда для абсолютных ссылок на картинки.
+
+    Из заголовков его не узнать: при проксировании через Vercel и Host, и
+    X-Forwarded-Host содержат адрес фронтенда. Render сам задаёт
+    RENDER_EXTERNAL_URL; локально берём адрес из запроса.
+    """
+    explicit = os.environ.get("PUBLIC_API_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     if explicit:
-        return explicit
-    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme).split(",")[0].strip()
-    # Не X-Forwarded-Host: при проксировании через Vercel там адрес фронтенда,
-    # где /api/files не обслуживается. Host — настоящий адрес бэкенда.
-    host = request.headers.get("Host", request.url.netloc)
-    return f"{proto}://{host}"
+        return explicit.rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 
 def og_page(title: str, description: str, url: str, image: str, kind: str = "website") -> StarletteResponse:
