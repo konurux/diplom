@@ -3,14 +3,33 @@
   "rewrites": [
     {
       "source": "/u/:ref",
-      "has": [{ "type": "header", "key": "user-agent", "value": ".*(bot|Bot|BOT|crawler|Crawler|spider|Spider|facebookexternalhit|WhatsApp|vkShare|Viber|SkypeUriPreview|Embedly|Preview|preview).*" }],
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(bot|Bot|BOT|crawler|Crawler|spider|Spider|facebookexternalhit|WhatsApp|vkShare|Viber|SkypeUriPreview|Embedly|Preview|preview).*"
+        }
+      ],
       "destination": "https://diplom-sn76.onrender.com/api/og/u/:ref"
     },
     {
       "source": "/design/:id",
-      "has": [{ "type": "header", "key": "user-agent", "value": ".*(bot|Bot|BOT|crawler|Crawler|spider|Spider|facebookexternalhit|WhatsApp|vkShare|Viber|SkypeUriPreview|Embedly|Preview|preview).*" }],
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(bot|Bot|BOT|crawler|Crawler|spider|Spider|facebookexternalhit|WhatsApp|vkShare|Viber|SkypeUriPreview|Embedly|Preview|preview).*"
+        }
+      ],
       "destination": "https://diplom-sn76.onrender.com/api/og/design/:id"
     },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "https://diplom-sn76.onrender.com/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }

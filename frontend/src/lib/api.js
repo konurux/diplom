@@ -1,12 +1,42 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-export const API = `${BACKEND_URL}/api`;
+const RENDER_URL = "https://diplom-sn76.onrender.com";
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || RENDER_URL;
+const IS_LOCAL = typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+
+/**
+ * В продакшене API идёт через тот же домен (/api проксируется Vercel на Render,
+ * см. vercel.json). Так cookie входа становятся «своими» для сайта и браузеры
+ * (Safari, Chrome в инкогнито) их не блокируют. Локально — напрямую на бэкенд.
+ */
+export const API = IS_LOCAL ? `${BACKEND_URL}/api` : "/api";
 
 export const api = axios.create({
-  baseURL: `${process.env.REACT_APP_BACKEND_URL || "https://diplom-sn76.onrender.com"}/api`,
+  baseURL: API,
   withCredentials: true,
 });
+
+// Access-токен живёт 12 часов: при 401 один раз обновляем его по refresh-cookie
+// и повторяем запрос, чтобы пользователя не выбрасывало из аккаунта.
+let refreshing = null;
+api.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const cfg = error.config;
+    const url = cfg?.url || "";
+    if (error.response?.status !== 401 || !cfg || cfg._retried || /\/auth\/(login|register|refresh|logout)/.test(url)) {
+      return Promise.reject(error);
+    }
+    cfg._retried = true;
+    try {
+      refreshing = refreshing || api.post("/auth/refresh").finally(() => { refreshing = null; });
+      await refreshing;
+    } catch {
+      return Promise.reject(error);
+    }
+    return api(cfg);
+  }
+);
 
 export function formatApiErrorDetail(detail) {
   if (detail == null) return "Что-то пошло не так. Попробуйте снова.";
@@ -20,7 +50,8 @@ export function formatApiErrorDetail(detail) {
   return String(detail);
 }
 
-const FILES_API = `${process.env.REACT_APP_BACKEND_URL || "https://diplom-sn76.onrender.com"}/api/files`;
+// Картинки грузим напрямую с бэкенда: им не нужны cookie, а прокси лишь добавил бы задержку.
+const FILES_API = `${BACKEND_URL}/api/files`;
 
 /**
  * URL загруженного файла. width (320 | 640 | 1280) — уменьшенная WebP-копия,
