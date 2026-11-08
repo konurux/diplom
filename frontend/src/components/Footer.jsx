@@ -26,6 +26,7 @@ export default function Footer() {
           <div className="text-sm font-semibold mb-3">Сообщество</div>
           <ul className="space-y-2 text-sm text-neutral-500 dark:text-neutral-400">
             <li><Link to="/trending" className="hover:text-neutral-900 dark:hover:text-white">В тренде</Link></li>
+            <li><Link to="/trainer" className="hover:text-neutral-900 dark:hover:text-white">Тренажёр насмотренности</Link></li>
             <li><Link to="/upload" className="hover:text-neutral-900 dark:hover:text-white">Добавить работу</Link></li>
             <li><Link to="/favorites" className="hover:text-neutral-900 dark:hover:text-white">Мудборд</Link></li>
           </ul>

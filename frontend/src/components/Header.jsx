@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Search, Sun, Moon, Plus, Bookmark, Compass, TrendingUp, LayoutGrid, Shield, LogOut, User as UserIcon, Menu, X } from "@/components/icons";
+import { Search, Sun, Moon, Plus, Bookmark, Compass, TrendingUp, LayoutGrid, Shield, LogOut, User as UserIcon, Menu, X, Target } from "@/components/icons";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { Button } from "./ui/button";
@@ -39,6 +39,7 @@ export default function Header() {
   const navItems = [
     { to: "/explore", label: "Галерея", icon: LayoutGrid, testid: "nav-categories" },
     { to: "/trending", label: "В тренде", icon: TrendingUp, testid: "nav-trending" },
+    { to: "/trainer", label: "Тренажёр", icon: Target, testid: "nav-trainer" },
     { to: "/favorites", label: "Мудборд", icon: Bookmark, testid: "nav-favorites" },
   ];
 

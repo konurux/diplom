@@ -651,6 +651,89 @@ class TestAdminUserCRUD:
         assert r.status_code == 401
 
 
+# -------- Тренажёр насмотренности ----------
+TRAINER_CAT = "trainer-test-" + uuid.uuid4().hex[:6]
+
+
+class TestTrainer:
+    def test_requires_auth(self):
+        assert requests.get(f"{API}/trainer/pair", timeout=10).status_code == 401
+
+    def test_not_enough_designs(self, user_account):
+        s, *_ = user_account
+        r = s.get(f"{API}/trainer/pair", params={"category": TRAINER_CAT}, timeout=10)
+        assert r.status_code == 404
+
+    def test_pair_vote_and_majority(self, admin, user_account, user2_account):
+        a, _ = admin
+        ids = []
+        for _ in range(2):
+            r = a.post(f"{API}/designs", json=_payload(category=TRAINER_CAT, images=[_upload(a)]), timeout=20)
+            assert r.status_code == 200, r.text
+            ids.append(r.json()["id"])
+        pytest.trainer_design_ids = ids
+
+        # Автор не видит своих работ в тренажёре
+        assert a.get(f"{API}/trainer/pair", params={"category": TRAINER_CAT}, timeout=10).status_code == 404
+
+        s1, *_ = user_account
+        r = s1.get(f"{API}/trainer/pair", params={"category": TRAINER_CAT}, timeout=10)
+        assert r.status_code == 200, r.text
+        pair = [d["id"] for d in r.json()["pair"]]
+        assert sorted(pair) == sorted(ids)
+        assert r.json()["stats"] == {"total": 0, "compared": 0, "agreed": 0}
+
+        # Первый голос: сравнивать не с чем
+        r = s1.post(f"{API}/trainer/vote", json={"winner_id": ids[0], "loser_id": ids[1]}, timeout=10)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["agreed"] is None
+        assert body["votes"] == {ids[0]: 1, ids[1]: 0}
+        assert body["stats"] == {"total": 1, "compared": 0, "agreed": 0}
+
+        # Повторно ту же пару не оценить и она больше не выдаётся
+        r = s1.post(f"{API}/trainer/vote", json={"winner_id": ids[1], "loser_id": ids[0]}, timeout=10)
+        assert r.status_code == 409
+        assert s1.get(f"{API}/trainer/pair", params={"category": TRAINER_CAT}, timeout=10).status_code == 404
+
+        # Второй пользователь выбирает другую работу — не совпал с большинством
+        s2, *_ = user2_account
+        r = s2.post(f"{API}/trainer/vote", json={"winner_id": ids[1], "loser_id": ids[0]}, timeout=10)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["agreed"] is False
+        assert body["votes"] == {ids[1]: 1, ids[0]: 1}
+        assert body["total_votes"] == 2
+        assert s2.get(f"{API}/trainer/stats", timeout=10).json() == {"total": 1, "compared": 1, "agreed": 0}
+
+    def test_vote_validation(self, user_account, admin):
+        s, *_ = user_account
+        ids = getattr(pytest, "trainer_design_ids", None)
+        assert ids
+        assert s.post(f"{API}/trainer/vote", json={"winner_id": ids[0], "loser_id": ids[0]}, timeout=10).status_code == 400
+        assert s.post(f"{API}/trainer/vote", json={"winner_id": "bad", "loser_id": ids[0]}, timeout=10).status_code == 400
+        a, _ = admin
+        r = a.post(f"{API}/trainer/vote", json={"winner_id": ids[0], "loser_id": ids[1]}, timeout=10)
+        assert r.status_code == 400  # свои работы оценивать нельзя
+
+    def test_pending_designs_excluded(self, user_account, user2_account):
+        s1, *_ = user_account
+        own = s1.post(f"{API}/designs", json=_payload(category=TRAINER_CAT + "-p", images=[_upload(s1)]), timeout=20).json()
+        other = s1.post(f"{API}/designs", json=_payload(category=TRAINER_CAT + "-p", images=[_upload(s1)]), timeout=20).json()
+        assert own["status"] == "pending"
+        s2, *_ = user2_account
+        assert s2.get(f"{API}/trainer/pair", params={"category": TRAINER_CAT + "-p"}, timeout=10).status_code == 404
+        r = s2.post(f"{API}/trainer/vote", json={"winner_id": own["id"], "loser_id": other["id"]}, timeout=10)
+        assert r.status_code == 404
+        for d in (own, other):
+            s1.delete(f"{API}/designs/{d['id']}", timeout=10)
+
+    def test_cleanup(self, admin):
+        a, _ = admin
+        for did in getattr(pytest, "trainer_design_ids", []):
+            assert a.delete(f"{API}/designs/{did}", timeout=10).status_code == 200
+
+
 # -------- Upload ----------
 class TestUpload:
     def test_upload_image(self, admin):

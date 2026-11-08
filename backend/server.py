@@ -3,6 +3,7 @@ import html
 import io
 import logging
 import os
+import random
 import re
 
 import uuid
@@ -765,6 +766,7 @@ async def delete_design(design_id: str, user: dict = Depends(get_current_user)):
     await db.comments.delete_many({"design_id": design_id})
     await db.favorites.delete_many({"design_id": design_id})
     await db.likes.delete_many({"design_id": design_id})
+    await db.trainer_votes.delete_many({"design_ids": design_id})
     await release_files(d.get("images", []), d["author_id"])
     return {"ok": True}
 
@@ -873,6 +875,111 @@ async def delete_comment(comment_id: str, user: dict = Depends(get_current_user)
     await db.comments.delete_one({"_id": c["_id"]})
     return {"ok": True}
 
+# ---------- Тренажёр насмотренности ----------
+# Пользователю показывают две работы, он выбирает более удачную и видит,
+# совпал ли его выбор с большинством других дизайнеров.
+TRAINER_SCAN_LIMIT = 300  # сколько работ рассматриваем при подборе пары
+
+class TrainerVote(BaseModel):
+    winner_id: str
+    loser_id: str
+
+def pair_key(a: str, b: str) -> str:
+    return ":".join(sorted([a, b]))
+
+async def trainer_stats(user_id: str) -> dict:
+    u = await db.users.find_one({"_id": ObjectId(user_id)}, {"trainer_total": 1, "trainer_compared": 1, "trainer_agreed": 1}) or {}
+    return {
+        "total": u.get("trainer_total", 0),        # всего оценённых пар
+        "compared": u.get("trainer_compared", 0),  # пары, где уже было мнение большинства
+        "agreed": u.get("trainer_agreed", 0),      # из них совпало с большинством
+    }
+
+@api_router.get("/trainer/pair")
+async def trainer_pair(category: Optional[str] = None, user: dict = Depends(get_current_user)):
+    query: dict = {"status": "approved", "images.0": {"$exists": True}, "author_id": {"$ne": user["id"]}}
+    if category and category != "all":
+        query["category"] = category
+    docs = await db.designs.find(query, {"category": 1}).to_list(TRAINER_SCAN_LIMIT)
+    if len(docs) < 2:
+        raise HTTPException(status_code=404, detail="Пока недостаточно работ для тренажёра")
+    voted = {v["pair_key"] async for v in db.trainer_votes.find({"user_id": user["id"]}, {"pair_key": 1})}
+
+    # Ищем пару, которую пользователь ещё не оценивал; работы одной категории сравнивать честнее
+    random.shuffle(docs)
+    fallback = None
+    chosen = None
+    for i, a in enumerate(docs):
+        for b in docs[i + 1:]:
+            if pair_key(str(a["_id"]), str(b["_id"])) in voted:
+                continue
+            if a.get("category") == b.get("category"):
+                chosen = (a, b)
+                break
+            fallback = fallback or (a, b)
+        if chosen:
+            break
+    chosen = chosen or fallback
+    if not chosen:
+        raise HTTPException(status_code=404, detail="Вы оценили все доступные пары — загляните позже, когда появятся новые работы")
+
+    pair = []
+    for doc in chosen:
+        full = await db.designs.find_one({"_id": doc["_id"]})
+        pair.append(await serialize_design(full, user))
+    return {"pair": pair, "stats": await trainer_stats(user["id"])}
+
+@api_router.post("/trainer/vote")
+async def trainer_vote(body: TrainerVote, user: dict = Depends(get_current_user)):
+    if body.winner_id == body.loser_id:
+        raise HTTPException(status_code=400, detail="Нужно сравнить две разные работы")
+    try:
+        ids = [ObjectId(body.winner_id), ObjectId(body.loser_id)]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Неверный ID")
+    found = await db.designs.find({"_id": {"$in": ids}, "status": "approved"}, {"author_id": 1}).to_list(2)
+    if len(found) != 2:
+        raise HTTPException(status_code=404, detail="Работа не найдена")
+    if any(d.get("author_id") == user["id"] for d in found):
+        raise HTTPException(status_code=400, detail="Свои работы оценивать нельзя")
+
+    key = pair_key(body.winner_id, body.loser_id)
+    prior_winner = await db.trainer_votes.count_documents({"pair_key": key, "winner_id": body.winner_id})
+    prior_total = await db.trainer_votes.count_documents({"pair_key": key})
+    prior_loser = prior_total - prior_winner
+    try:
+        await db.trainer_votes.insert_one({
+            "user_id": user["id"],
+            "pair_key": key,
+            "design_ids": [body.winner_id, body.loser_id],
+            "winner_id": body.winner_id,
+            "loser_id": body.loser_id,
+            "created_at": now_iso(),
+        })
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Вы уже оценили эту пару")
+
+    # Совпадение с большинством считаем по голосам, отданным до этого выбора
+    agreed = None if prior_winner == prior_loser else prior_winner > prior_loser
+    inc = {"trainer_total": 1}
+    if agreed is not None:
+        inc["trainer_compared"] = 1
+        if agreed:
+            inc["trainer_agreed"] = 1
+    await db.users.update_one({"_id": ObjectId(user["id"])}, {"$inc": inc})
+    await db.designs.update_one({"_id": ids[0]}, {"$inc": {"duel_wins": 1}})
+    await db.designs.update_one({"_id": ids[1]}, {"$inc": {"duel_losses": 1}})
+    return {
+        "agreed": agreed,
+        "votes": {body.winner_id: prior_winner + 1, body.loser_id: prior_loser},
+        "total_votes": prior_total + 1,
+        "stats": await trainer_stats(user["id"]),
+    }
+
+@api_router.get("/trainer/stats")
+async def get_trainer_stats(user: dict = Depends(get_current_user)):
+    return await trainer_stats(user["id"])
+
 # ---------- Admin: users management ----------
 @api_router.get("/admin/users")
 async def admin_users(user: dict = Depends(require_roles("admin"))):
@@ -928,6 +1035,7 @@ async def admin_delete_user(user_id: str, current: dict = Depends(require_roles(
     await db.comments.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
     await db.favorites.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
     await db.likes.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await db.trainer_votes.delete_many({"$or": [{"user_id": user_id}, {"design_ids": {"$in": design_ids}}]})
     await release_files(paths, user_id)
     return {"ok": True}
 
@@ -1077,6 +1185,9 @@ async def startup():
     await db.comments.create_index([("design_id", 1), ("created_at", -1)])
     await db.views.create_index([("design_id", 1), ("viewer", 1), ("day", 1)], unique=True)
     await db.views.create_index("created_at", expireAfterSeconds=3 * 24 * 3600)
+    await db.trainer_votes.create_index([("user_id", 1), ("pair_key", 1)], unique=True)
+    await db.trainer_votes.create_index([("pair_key", 1), ("winner_id", 1)])
+    await db.trainer_votes.create_index("design_ids")
 
     # Seed admin
     # Админ создаётся только если заданы ADMIN_EMAIL и ADMIN_PASSWORD.

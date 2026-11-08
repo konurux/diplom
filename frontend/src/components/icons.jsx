@@ -50,6 +50,7 @@ import {
   Star as PhStar,
   Sun as PhSun,
   Tag as PhTag,
+  Target as PhTarget,
   Trash,
   TrendUp,
   UploadSimple,
@@ -110,6 +111,7 @@ export const Sparkles = wrap(Sparkle, "Sparkles");
 export const Star = wrap(PhStar, "Star");
 export const Sun = wrap(PhSun, "Sun");
 export const Tag = wrap(PhTag, "Tag");
+export const Target = wrap(PhTarget, "Target");
 export const Trash2 = wrap(Trash, "Trash2");
 export const TrendingUp = wrap(TrendUp, "TrendingUp");
 export const Upload = wrap(UploadSimple, "Upload");

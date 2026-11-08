@@ -16,6 +16,7 @@ import Portfolio from "./pages/Portfolio";
 import Favorites from "./pages/Favorites";
 import UploadDesign from "./pages/UploadDesign";
 import Admin from "./pages/Admin";
+import Trainer from "./pages/Trainer";
 import NotFound from "./pages/NotFound";
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
                 <Route path="/" element={<Home />} />
                 <Route path="/explore" element={<Explore />} />
                 <Route path="/trending" element={<Trending />} />
+                <Route path="/trainer" element={<Trainer />} />
                 <Route path="/favorites" element={<Favorites />} />
                 <Route path="/design/:id" element={<ProductDetail />} />
                 <Route path="/login" element={<Login />} />
