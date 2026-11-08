@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "@/components/icons";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -58,7 +58,7 @@ export default function Register() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight">Создать аккаунт</h1>
-          <p className="mt-2 text-neutral-500">Присоединяйтесь к сообществу Dezi</p>
+          <p className="mt-2 text-neutral-500">Присоединяйтесь к сообществу PixVault</p>
         </div>
         <form onSubmit={onSubmit} className="space-y-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl p-7 soft-shadow" data-testid="register-form">
           <div>

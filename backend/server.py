@@ -1,6 +1,9 @@
+import hashlib
+import html
 import io
 import logging
 import os
+import re
 
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -24,9 +27,12 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import StreamingResponse
+from gridfs.errors import NoFile
+from PIL import Image, ImageOps
+from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-import requests
+from pymongo.errors import DuplicateKeyError
 from starlette.responses import Response as StarletteResponse  # Тот самый важный импорт!
 
 APP_NAME = "dezi"
@@ -36,7 +42,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("dezi")
+logger = logging.getLogger("pixvault")
 
 # ---------- DB ----------
 mongo_url = os.environ["MONGO_URL"]
@@ -44,43 +50,53 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 # ---------- App & Инициализация ----------
-app = FastAPI(title="Dezi Market API")
+app = FastAPI(title="PixVault API", description="Digital Asset & Portfolio Platform")
 api_router = APIRouter(prefix="/api")
 
-# ---------- АБСОЛЮТНЫЙ ПЕРЕХВАТЧИК OPTIONS (ASGI УРОВЕНЬ) ----------
-@app.middleware("http")
-async def catch_options_preflight(request: Request, call_next):
-    origin = request.headers.get("Origin", "")
-    
-    # Проверяем, что запрос идет с твоего фронтенда Vercel или локалки
-    allowed_origin = None
-    if origin:
-        if (
-            "vercel.app" in origin 
-            or "localhost" in origin 
-            or "127.0.0.1" in origin
-        ):
-            allowed_origin = origin
-        else:
-            # Дефолтный домен на случай, если Origin пустой
-            allowed_origin = "https://diplom-kappa-three.vercel.app"
-    else:
-        allowed_origin = "https://diplom-kappa-three.vercel.app"
+# ---------- CORS + защита от CSRF ----------
+# Разрешённые фронтенды задаются через ALLOWED_ORIGINS (через запятую).
+# Пример для Render: ALLOWED_ORIGINS=https://diplom-kappa-three.vercel.app
+DEFAULT_ORIGINS = "https://diplom-kappa-three.vercel.app"
+ALLOWED_ORIGINS = {
+    o.strip().rstrip("/")
+    for o in os.environ.get("ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",")
+    if o.strip()
+}
+LOCAL_ORIGIN_RE = re.compile(r"^http://(localhost|127\.0\.0\.1)(:\d+)?$")
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
-    # Если это предзапрос OPTIONS
+
+def is_allowed_origin(origin: str) -> bool:
+    return origin in ALLOWED_ORIGINS or bool(LOCAL_ORIGIN_RE.match(origin))
+
+
+@app.middleware("http")
+async def cors_and_csrf(request: Request, call_next):
+    origin = request.headers.get("Origin", "").rstrip("/")
+    allowed = bool(origin) and is_allowed_origin(origin)
+
     if request.method == "OPTIONS":
-        response = StarletteResponse(status_code=204)
-        response.headers["Access-Control-Allow-Origin"] = allowed_origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
-        response.headers["Access-Control-Max-Age"] = "86400"
+        response = StarletteResponse(status_code=204 if allowed else 403)
+        if allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With"
+            response.headers["Access-Control-Max-Age"] = "86400"
+            response.headers["Vary"] = "Origin"
         return response
-    
-    # Для основных запросов (GET, POST, PATCH и т.д.)
+
+    # Браузер всегда присылает Origin в кросс-доменных изменяющих запросах.
+    # Чужой сайт не должен выполнять действия от имени вошедшего пользователя.
+    if origin and not allowed and request.method not in SAFE_METHODS:
+        return StarletteResponse(status_code=403, content="Origin not allowed")
+
     response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = allowed_origin
-    response.headers["Access-Control-Allow-Credentials"] = "true"
+    if allowed:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
+        response.headers["Vary"] = "Origin"
     return response
 
 JWT_ALGORITHM = "HS256"
@@ -188,6 +204,60 @@ def require_roles(*roles: str):
         return user
     return dep
 
+# ---------- Username (красивые ссылки /u/<username>) ----------
+USERNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$")
+RESERVED_USERNAMES = {
+    "admin", "api", "me", "u", "user", "users", "profile", "settings", "login", "logout",
+    "register", "explore", "trending", "favorites", "upload", "design", "designs", "pixvault",
+    "moderator", "support", "help", "about", "null", "undefined",
+}
+_TRANSLIT = dict(zip(
+    "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t",
+     "u", "f", "h", "ts", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"],
+))
+
+
+def slugify_username(text: str) -> str:
+    out = "".join(_TRANSLIT.get(ch, ch) for ch in (text or "").lower())
+    out = re.sub(r"[^a-z0-9]+", "-", out).strip("-")
+    out = re.sub(r"-{2,}", "-", out)[:24].strip("-")
+    return out if len(out) >= 3 else (out + "-designer").strip("-")
+
+
+def validate_username(value: str) -> str:
+    v = (value or "").strip().lower()
+    if not USERNAME_RE.match(v):
+        raise HTTPException(status_code=400, detail="Имя в ссылке: 3–30 символов, латиница, цифры и дефис, без дефиса по краям")
+    if v in RESERVED_USERNAMES:
+        raise HTTPException(status_code=400, detail="Это имя зарезервировано, выберите другое")
+    return v
+
+
+async def unique_username(base_text: str, exclude_id=None) -> str:
+    base = slugify_username(base_text)
+    if base in RESERVED_USERNAMES:
+        base = f"{base}-1"
+    candidate, n = base, 1
+    while True:
+        q = {"username": candidate}
+        if exclude_id is not None:
+            q["_id"] = {"$ne": exclude_id}
+        if not await db.users.find_one(q, {"_id": 1}):
+            return candidate
+        n += 1
+        candidate = f"{base[:26]}-{n}"
+
+
+async def find_user_by_ref(ref: str):
+    """Пользователь по username или (для старых ссылок) по ObjectId."""
+    if ObjectId.is_valid(ref):
+        u = await db.users.find_one({"_id": ObjectId(ref)})
+        if u:
+            return u
+    return await db.users.find_one({"username": ref.lower()})
+
+
 # ---------- Pydantic Models ----------
 class UserPublic(BaseModel):
     id: str
@@ -208,6 +278,7 @@ class LoginBody(BaseModel):
     password: str
 
 class UpdateProfileBody(BaseModel):
+    username: Optional[str] = None
     name: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -218,8 +289,6 @@ class DesignCreate(BaseModel):
     category: str
     styles: List[str] = Field(min_length=1)
     external_url: str = Field(min_length=4, max_length=500)
-    price: float = 0.0
-    is_free: bool = True
     tags: List[str] = []
     images: List[str] = []
 
@@ -229,8 +298,6 @@ class DesignUpdate(BaseModel):
     category: Optional[str] = None
     styles: Optional[List[str]] = None
     external_url: Optional[str] = None
-    price: Optional[float] = None
-    is_free: Optional[bool] = None
     tags: Optional[List[str]] = None
     images: Optional[List[str]] = None
     status: Optional[str] = None
@@ -251,6 +318,7 @@ def now_iso() -> str:
 def serialize_user(u: dict) -> dict:
     return {
         "id": str(u.get("_id") or u.get("id")),
+        "username": u.get("username"),
         "email": u["email"],
         "name": u.get("name", ""),
         "role": u.get("role", "user"),
@@ -273,8 +341,6 @@ async def serialize_design(d: dict, current_user: Optional[dict] = None) -> dict
         "category": d["category"],
         "styles": d.get("styles") or ([d["style"]] if d.get("style") else []),
         "external_url": d.get("external_url", ""),
-        "price": d.get("price", 0.0),
-        "is_free": d.get("is_free", True),
         "tags": d.get("tags", []),
         "images": d.get("images", []),
         "status": d.get("status", "pending"),
@@ -287,6 +353,7 @@ async def serialize_design(d: dict, current_user: Optional[dict] = None) -> dict
         "updated_at": d.get("updated_at"),
         "author": {
             "id": str(author["_id"]) if author else None,
+            "username": author.get("username") if author else None,
             "name": author.get("name") if author else "Аноним",
             "avatar_url": author.get("avatar_url") if author else None,
             "role": author.get("role") if author else "user",
@@ -304,6 +371,7 @@ async def register(body: RegisterBody, response: Response):
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
     doc = {
         "email": email,
+        "username": await unique_username(body.name.strip() or email.split("@")[0]),
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "role": "user",
@@ -358,13 +426,49 @@ async def refresh_token(request: Request, response: Response):
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Недействительный токен")
 
+# ---------- Public portfolio ----------
+@api_router.get("/users/{ref}")
+async def public_user(ref: str):
+    u = await find_user_by_ref(ref)
+    if not u:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    user_id = str(u["_id"])
+    designs = await db.designs.count_documents({"author_id": user_id, "status": "approved"})
+    agg = await db.designs.aggregate([
+        {"$match": {"author_id": user_id, "status": "approved"}},
+        {"$group": {"_id": None, "likes": {"$sum": "$likes_count"}, "views": {"$sum": "$views_count"}}},
+    ]).to_list(1)
+    totals = agg[0] if agg else {}
+    return {
+        "id": str(u["_id"]),
+        "username": u.get("username"),
+        "name": u.get("name", ""),
+        "role": u.get("role", "user"),
+        "avatar_url": u.get("avatar_url"),
+        "bio": u.get("bio"),
+        "created_at": u.get("created_at"),
+        "designs_count": designs,
+        "likes_total": totals.get("likes", 0),
+        "views_total": totals.get("views", 0),
+    }
+
 # ---------- Profile ----------
 @api_router.patch("/users/me")
 async def update_me(body: UpdateProfileBody, user: dict = Depends(get_current_user)):
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     if not update:
         return user
+    if "username" in update:
+        update["username"] = validate_username(update["username"])
+        taken = await db.users.find_one({"username": update["username"], "_id": {"$ne": ObjectId(user["id"])}}, {"_id": 1})
+        if taken:
+            raise HTTPException(status_code=400, detail="Это имя уже занято")
+    if "name" in update and not update["name"].strip():
+        raise HTTPException(status_code=400, detail="Имя не может быть пустым")
     await db.users.update_one({"_id": ObjectId(user["id"])}, {"$set": update})
+    old_avatar = user.get("avatar_url")
+    if "avatar_url" in update and old_avatar and old_avatar != update["avatar_url"]:
+        await release_files([old_avatar], user["id"])
     fresh = await db.users.find_one({"_id": ObjectId(user["id"])})
     return serialize_user(fresh)
 
@@ -392,22 +496,104 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     })
     return {"path": result["path"], "url": f"/api/files/{result['path']}"}
 
-@api_router.get("/files/{path:path}")
-@api_router.get("/files/{path:path}")
-async def get_file(path: str):
+# Превью: /api/files/<path>?w=640 — уменьшенная WebP-копия, создаётся при первом запросе
+THUMB_WIDTHS = (320, 640, 1280)
+FILE_CACHE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+Image.MAX_IMAGE_PIXELS = 40_000_000  # защита от «бомб» распаковки
+
+
+async def read_gridfs(name: str):
     fs = AsyncIOMotorGridFSBucket(db)
     try:
-        grid_out = await fs.open_download_stream_by_name(path)
-        data = await grid_out.read()
-        
-        # Добавляем fallback: если в БД нет contentType, по умолчанию считаем, что это image/jpeg
-        ctype = "image/jpeg"
-        if grid_out.metadata and "contentType" in grid_out.metadata:
-            ctype = grid_out.metadata["contentType"]
-            
-        return Response(content=data, media_type=ctype)
-    except Exception:
+        grid_out = await fs.open_download_stream_by_name(name)
+    except NoFile:
+        return None
+    data = await grid_out.read()
+    ctype = (grid_out.metadata or {}).get("contentType", "image/jpeg")
+    return data, ctype
+
+
+def make_thumbnail(data: bytes, width: int) -> Optional[bytes]:
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if getattr(im, "is_animated", False):
+                return None  # анимированные GIF отдаём как есть
+            im = ImageOps.exif_transpose(im)
+            im = im.convert("RGBA" if im.mode in ("RGBA", "LA", "P") else "RGB")
+            if im.width > width:
+                im.thumbnail((width, width * 4), Image.LANCZOS)
+            out = io.BytesIO()
+            im.save(out, format="WEBP", quality=80, method=4)
+            return out.getvalue()
+    except Exception as e:  # битый файл, слишком большой и т.п.
+        logger.warning("Не удалось сделать превью: %s", e)
+        return None
+
+
+@api_router.get("/files/{path:path}")
+async def get_file(path: str, w: Optional[int] = Query(None)):
+    if w is not None:
+        width = min(THUMB_WIDTHS, key=lambda t: abs(t - w))  # только фиксированные размеры
+        thumb_name = f"{path}@w{width}.webp"
+        cached = await read_gridfs(thumb_name)
+        if cached:
+            return Response(content=cached[0], media_type="image/webp", headers=FILE_CACHE_HEADERS)
+        original = await read_gridfs(path)
+        if not original:
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        thumb = await run_in_threadpool(make_thumbnail, original[0], width)
+        if thumb is None:
+            return Response(content=original[0], media_type=original[1], headers=FILE_CACHE_HEADERS)
+        await put_object(thumb_name, thumb, "image/webp")
+        return Response(content=thumb, media_type="image/webp", headers=FILE_CACHE_HEADERS)
+
+    found = await read_gridfs(path)
+    if not found:
         raise HTTPException(status_code=404, detail="Файл не найден")
+    return Response(content=found[0], media_type=found[1], headers=FILE_CACHE_HEADERS)
+
+# ---------- Очистка файлов ----------
+UPLOAD_PREFIX = f"{APP_NAME}/uploads/"
+ORPHAN_GRACE = timedelta(hours=1)  # свежие загрузки ещё могут прикрепить к форме
+
+
+def base_file_name(name: str) -> str:
+    """dezi/uploads/u/x.png@w640.webp -> dezi/uploads/u/x.png"""
+    return name.split("@w", 1)[0]
+
+
+async def is_file_referenced(path: str) -> bool:
+    if await db.designs.find_one({"images": path}, {"_id": 1}):
+        return True
+    return bool(await db.users.find_one({"avatar_url": path}, {"_id": 1}))
+
+
+async def delete_stored_file(path: str) -> int:
+    """Удаляет оригинал и все его превью из GridFS. Возвращает освобождённые байты."""
+    fs = AsyncIOMotorGridFSBucket(db)
+    names = [path] + [f"{path}@w{w}.webp" for w in THUMB_WIDTHS]
+    freed = 0
+    async for f in db.fs.files.find({"filename": {"$in": names}}, {"_id": 1, "length": 1}):
+        await fs.delete(f["_id"])
+        freed += f.get("length", 0)
+    await db.files.delete_many({"storage_path": path})
+    return freed
+
+
+async def release_files(paths, owner_id: str) -> int:
+    """Удаляет файлы владельца, на которые больше никто не ссылается.
+
+    Путь должен лежать в папке владельца: images приходят от клиента, и без этой
+    проверки можно было бы удалить чужой файл, сославшись на него в своей работе.
+    """
+    freed = 0
+    prefix = f"{UPLOAD_PREFIX}{owner_id}/"
+    for p in {p for p in (paths or []) if isinstance(p, str)}:
+        if not p.startswith(prefix) or await is_file_referenced(p):
+            continue
+        freed += await delete_stored_file(p)
+    return freed
+
 
 # ---------- Designs ----------
 @api_router.post("/designs")
@@ -420,8 +606,6 @@ async def create_design(body: DesignCreate, user: dict = Depends(get_current_use
         "category": body.category,
         "styles": [s for s in body.styles if s][:5] or ["modern"],
         "external_url": body.external_url.strip(),
-        "price": 0.0 if body.is_free else max(body.price, 0.0),
-        "is_free": body.is_free,
         "tags": [t.strip() for t in body.tags if t.strip()][:12],
         "images": body.images[:8],
         "status": status,
@@ -441,10 +625,10 @@ async def create_design(body: DesignCreate, user: dict = Depends(get_current_use
 @api_router.get("/designs")
 async def list_designs(
     request: Request,
+    response: Response,
     q: Optional[str] = None,
     category: Optional[str] = None,
     style: Optional[str] = None,
-    price: Optional[str] = None,
     sort: str = "popular",
     status: str = "approved",
     author_id: Optional[str] = None,
@@ -453,8 +637,13 @@ async def list_designs(
 ):
     current = await get_optional_user(request)
     query: dict = {}
-    if status == "approved":
+    is_own = bool(current and author_id and author_id == current.get("id"))
+    if status == "all" and (is_own or (current and current.get("role") in ("admin", "moderator"))):
+        pass  # автор (или модератор) видит работы во всех статусах
+    elif status == "approved":
         query["status"] = "approved"
+    elif is_own:
+        query["status"] = status
     else:
         if not current or current.get("role") not in ("admin", "moderator"):
             query["status"] = "approved"
@@ -470,10 +659,6 @@ async def list_designs(
         query["category"] = category
     if style and style != "all":
         query["styles"] = style
-    if price == "free":
-        query["is_free"] = True
-    elif price == "paid":
-        query["is_free"] = False
     if author_id:
         query["author_id"] = author_id
 
@@ -481,10 +666,13 @@ async def list_designs(
         "popular": [("likes_count", -1), ("views_count", -1)],
         "newest": [("created_at", -1)],
         "rating": [("rating", -1), ("rating_count", -1)],
-        "downloads": [("downloads_count", -1)],
+        "views": [("views_count", -1)],
+        "downloads": [("views_count", -1)],  # старый ключ сортировки
     }
     sort_spec = sort_map.get(sort, sort_map["popular"])
-    cursor = db.designs.find(query).sort(sort_spec).skip(skip).limit(min(limit, 100))
+    response.headers["X-Total-Count"] = str(await db.designs.count_documents(query))
+    # стабильный порядок для постраничной подгрузки (без дублей между страницами)
+    cursor = db.designs.find(query).sort(sort_spec + [("_id", -1)]).skip(max(skip, 0)).limit(max(1, min(limit, 100)))
     designs = []
     async for d in cursor:
         designs.append(await serialize_design(d, current))
@@ -495,6 +683,31 @@ async def trending(request: Request):
     current = await get_optional_user(request)
     cursor = db.designs.find({"status": "approved"}).sort([("likes_count", -1), ("views_count", -1)]).limit(12)
     return [await serialize_design(d, current) async for d in cursor]
+
+def viewer_key(request: Request, current: Optional[dict]) -> str:
+    if current:
+        return "u:" + current["id"]
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+    ua = request.headers.get("User-Agent", "")
+    # Сырые IP не храним — только хэш
+    return "a:" + hashlib.sha256(f"{ip}|{ua}".encode()).hexdigest()[:32]
+
+
+async def register_view(design_id: str, request: Request, current: Optional[dict]) -> bool:
+    """True, если это первый просмотр этим зрителем за текущие сутки (UTC)."""
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        await db.views.insert_one({
+            "design_id": design_id,
+            "viewer": viewer_key(request, current),
+            "day": day,
+            "created_at": datetime.now(timezone.utc),
+        })
+        return True
+    except DuplicateKeyError:
+        return False
+
 
 @api_router.get("/designs/{design_id}")
 async def get_design(design_id: str, request: Request):
@@ -508,8 +721,9 @@ async def get_design(design_id: str, request: Request):
     if d.get("status") != "approved":
         if not current or (current.get("role") not in ("admin", "moderator") and current["id"] != d["author_id"]):
             raise HTTPException(status_code=403, detail="Нет доступа")
-    await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"views_count": 1}})
-    d["views_count"] = d.get("views_count", 0) + 1
+    if await register_view(design_id, request, current):
+        await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"views_count": 1}})
+        d["views_count"] = d.get("views_count", 0) + 1
     return await serialize_design(d, current)
 
 @api_router.patch("/designs/{design_id}")
@@ -527,12 +741,13 @@ async def update_design(design_id: str, body: DesignUpdate, user: dict = Depends
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     if "status" in update and not is_staff:
         del update["status"]
-    if "is_free" in update and update["is_free"]:
-        update["price"] = 0.0
     update["updated_at"] = now_iso()
     if not is_staff and is_owner:
         update.setdefault("status", "pending")
     await db.designs.update_one({"_id": d["_id"]}, {"$set": update})
+    if "images" in update:
+        removed = set(d.get("images", [])) - set(update["images"])
+        await release_files(removed, d["author_id"])
     fresh = await db.designs.find_one({"_id": d["_id"]})
     return await serialize_design(fresh, user)
 
@@ -550,6 +765,7 @@ async def delete_design(design_id: str, user: dict = Depends(get_current_user)):
     await db.comments.delete_many({"design_id": design_id})
     await db.favorites.delete_many({"design_id": design_id})
     await db.likes.delete_many({"design_id": design_id})
+    await release_files(d.get("images", []), d["author_id"])
     return {"ok": True}
 
 @api_router.post("/designs/{design_id}/moderate")
@@ -599,63 +815,6 @@ async def list_favorites(user: dict = Depends(get_current_user)):
             d = await db.designs.find_one({"_id": ObjectId(f["design_id"])})
             if d:
                 result.append(await serialize_design(d, user))
-        except Exception:
-            continue
-    return result
-
-# ---------- Download / Purchase ----------
-@api_router.post("/designs/{design_id}/download")
-async def download_design(design_id: str, user: dict = Depends(get_current_user)):
-    try:
-        d = await db.designs.find_one({"_id": ObjectId(design_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Неверный ID")
-    if not d or d.get("status") != "approved":
-        raise HTTPException(status_code=404, detail="Дизайн недоступен")
-    if not d.get("is_free", True):
-        purchased = await db.purchases.find_one({"user_id": user["id"], "design_id": design_id, "status": "completed"})
-        if not purchased:
-            raise HTTPException(status_code=402, detail="Требуется покупка")
-    await db.designs.update_one({"_id": d["_id"]}, {"$inc": {"downloads_count": 1}})
-    return {"ok": True, "files": d.get("images", [])}
-
-@api_router.post("/designs/{design_id}/purchase")
-async def purchase_design(design_id: str, user: dict = Depends(get_current_user)):
-    try:
-        d = await db.designs.find_one({"_id": ObjectId(design_id)})
-    except Exception:
-        raise HTTPException(status_code=400, detail="Неверный ID")
-    if not d or d.get("status") != "approved":
-        raise HTTPException(status_code=404, detail="Дизайн недоступен")
-    if d.get("is_free", True):
-        return {"ok": True, "status": "free"}
-    existing = await db.purchases.find_one({"user_id": user["id"], "design_id": design_id, "status": "completed"})
-    if existing:
-        return {"ok": True, "status": "already_purchased"}
-    await db.purchases.insert_one({
-        "user_id": user["id"],
-        "design_id": design_id,
-        "amount": d.get("price", 0.0),
-        "status": "completed",
-        "created_at": now_iso(),
-    })
-    return {"ok": True, "status": "completed"}
-
-@api_router.get("/purchases")
-async def list_purchases(user: dict = Depends(get_current_user)):
-    items = await db.purchases.find({"user_id": user["id"]}).sort("created_at", -1).to_list(500)
-    result = []
-    for p in items:
-        try:
-            d = await db.designs.find_one({"_id": ObjectId(p["design_id"])})
-            if d:
-                serialized = await serialize_design(d, user)
-                serialized["purchase"] = {
-                    "amount": p.get("amount", 0),
-                    "status": p.get("status"),
-                    "created_at": p.get("created_at"),
-                }
-                result.append(serialized)
         except Exception:
             continue
     return result
@@ -737,6 +896,7 @@ async def admin_create_user(body: AdminCreateUserBody, _user: dict = Depends(req
         raise HTTPException(status_code=400, detail="Email уже зарегистрирован")
     doc = {
         "email": email,
+        "username": await unique_username(body.name.strip() or email.split("@")[0]),
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "role": body.role,
@@ -758,13 +918,127 @@ async def admin_delete_user(user_id: str, current: dict = Depends(require_roles(
         raise HTTPException(status_code=400, detail="Неверный ID")
     if not target:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    designs = await db.designs.find({"author_id": user_id}, {"_id": 1, "images": 1}).to_list(None)
+    design_ids = [str(x["_id"]) for x in designs]
+    owned = [f["storage_path"] async for f in db.files.find({"owner_id": user_id}, {"storage_path": 1})]
+    paths = owned + [p for x in designs for p in x.get("images", [])] + [target.get("avatar_url")]
+
     await db.users.delete_one({"_id": ObjectId(user_id)})
     await db.designs.delete_many({"author_id": user_id})
-    await db.comments.delete_many({"user_id": user_id})
-    await db.favorites.delete_many({"user_id": user_id})
-    await db.likes.delete_many({"user_id": user_id})
-    await db.purchases.delete_many({"user_id": user_id})
+    await db.comments.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await db.favorites.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await db.likes.delete_many({"$or": [{"user_id": user_id}, {"design_id": {"$in": design_ids}}]})
+    await release_files(paths, user_id)
     return {"ok": True}
+
+
+@api_router.post("/admin/files/cleanup")
+async def admin_cleanup_files(dry_run: bool = True, current: dict = Depends(require_roles("admin"))):
+    """Удаляет загруженные файлы, на которые не ссылается ни одна работа или аватар.
+
+    dry_run=true (по умолчанию) — только посчитать. Файлы моложе часа не трогаем.
+    """
+    cutoff = datetime.now(timezone.utc) - ORPHAN_GRACE
+    sizes: dict = {}
+    async for f in db.fs.files.find({"filename": {"$regex": f"^{re.escape(UPLOAD_PREFIX)}"}}, {"filename": 1, "length": 1, "uploadDate": 1}):
+        base = base_file_name(f["filename"])
+        uploaded = f.get("uploadDate")
+        if uploaded and uploaded.replace(tzinfo=timezone.utc) > cutoff:
+            sizes[base] = None  # есть свежая версия — пропускаем всю группу
+            continue
+        if base in sizes and sizes[base] is None:
+            continue
+        sizes[base] = sizes.get(base, 0) + f.get("length", 0)
+    orphans = []
+    for base, size in sizes.items():
+        if size is None or await is_file_referenced(base):
+            continue
+        orphans.append((base, size))
+    freed = 0
+    if not dry_run:
+        for base, _ in orphans:
+            freed += await delete_stored_file(base)
+    return {
+        "dry_run": dry_run,
+        "orphan_files": len(orphans),
+        "orphan_bytes": sum(sz for _, sz in orphans),
+        "freed_bytes": freed,
+    }
+
+# ---------- Open Graph (превью ссылок в Telegram, VK, Slack и т.п.) ----------
+# Боты соцсетей не выполняют JavaScript, поэтому Vercel перенаправляет их сюда
+# (см. frontend/vercel.json), а людей — на обычное SPA.
+SITE_URL = os.environ.get("SITE_URL", "https://diplom-kappa-three.vercel.app").rstrip("/")
+OG_FALLBACK_IMAGE = f"{SITE_URL}/og-image.png"
+
+
+def public_api_base(request: Request) -> str:
+    explicit = os.environ.get("PUBLIC_API_URL", "").rstrip("/")
+    if explicit:
+        return explicit
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.headers.get("Host", request.url.netloc))
+    return f"{proto}://{host}"
+
+
+def og_page(title: str, description: str, url: str, image: str, kind: str = "website") -> StarletteResponse:
+    t, d, u, i = (html.escape(x or "", quote=True) for x in (title, description, url, image))
+    body = f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>{t}</title>
+<meta name="description" content="{d}">
+<link rel="canonical" href="{u}">
+<meta property="og:site_name" content="PixVault">
+<meta property="og:type" content="{kind}">
+<meta property="og:title" content="{t}">
+<meta property="og:description" content="{d}">
+<meta property="og:url" content="{u}">
+<meta property="og:image" content="{i}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{t}">
+<meta name="twitter:description" content="{d}">
+<meta name="twitter:image" content="{i}">
+<meta http-equiv="refresh" content="0; url={u}">
+</head><body><a href="{u}">{t}</a></body></html>"""
+    return StarletteResponse(content=body, media_type="text/html; charset=utf-8",
+                             headers={"Cache-Control": "public, max-age=600"})
+
+
+def short(text: str, limit: int = 180) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+@api_router.get("/og/u/{ref}")
+async def og_portfolio(ref: str, request: Request):
+    u = await find_user_by_ref(ref)
+    if not u:
+        return og_page("PixVault", "Digital Asset & Portfolio Platform", SITE_URL, OG_FALLBACK_IMAGE)
+    uid = str(u["_id"])
+    count = await db.designs.count_documents({"author_id": uid, "status": "approved"})
+    latest = await db.designs.find_one({"author_id": uid, "status": "approved", "images.0": {"$exists": True}}, sort=[("created_at", -1)])
+    api_base = public_api_base(request)
+    if latest:
+        image = f"{api_base}/api/files/{latest['images'][0]}?w=1280"
+    elif u.get("avatar_url"):
+        image = f"{api_base}/api/files/{u['avatar_url']}?w=640"
+    else:
+        image = OG_FALLBACK_IMAGE
+    name = u.get("name") or u.get("username")
+    desc = short(u.get("bio") or "") or f"{count} работ в портфолио на PixVault"
+    return og_page(f"{name} — портфолио на PixVault", desc, f"{SITE_URL}/u/{u.get('username') or uid}", image, "profile")
+
+
+@api_router.get("/og/design/{design_id}")
+async def og_design(design_id: str, request: Request):
+    d = await db.designs.find_one({"_id": ObjectId(design_id)}) if ObjectId.is_valid(design_id) else None
+    if not d or d.get("status") != "approved":
+        return og_page("PixVault", "Digital Asset & Portfolio Platform", SITE_URL, OG_FALLBACK_IMAGE)
+    author = await db.users.find_one({"_id": ObjectId(d["author_id"])}) if d.get("author_id") else None
+    image = f"{public_api_base(request)}/api/files/{d['images'][0]}?w=1280" if d.get("images") else OG_FALLBACK_IMAGE
+    by = f" — {author.get('name')}" if author else ""
+    return og_page(f"{d['title']}{by} | PixVault", short(d.get("description")), f"{SITE_URL}/design/{design_id}", image, "article")
+
 
 # ---------- Stats ----------
 @api_router.get("/stats")
@@ -777,7 +1051,7 @@ async def stats():
 
 @api_router.get("/")
 async def root():
-    return {"app": "Dezi Market API", "status": "ok"}
+    return {"app": "PixVault API", "status": "ok"}
 
 # ---------- Роутер подключаем в самом конце файла ----------
 app.include_router(api_router)
@@ -786,20 +1060,43 @@ app.include_router(api_router)
 async def startup():
     # Indexes
     await db.users.create_index("email", unique=True)
+    # Заполняем username у старых аккаунтов, затем включаем уникальность
+    async for u in db.users.find({"$or": [{"username": {"$exists": False}}, {"username": None}]}):
+        uname = await unique_username(u.get("name") or u["email"].split("@")[0], exclude_id=u["_id"])
+        await db.users.update_one({"_id": u["_id"]}, {"$set": {"username": uname}})
+    await db.users.create_index("username", unique=True, partialFilterExpression={"username": {"$type": "string"}})
     await db.designs.create_index([("status", 1), ("created_at", -1)])
     await db.designs.create_index([("author_id", 1)])
     await db.designs.create_index([("category", 1), ("styles", 1)])
     await db.favorites.create_index([("user_id", 1), ("design_id", 1)], unique=True)
     await db.likes.create_index([("user_id", 1), ("design_id", 1)], unique=True)
     await db.comments.create_index([("design_id", 1), ("created_at", -1)])
+    await db.views.create_index([("design_id", 1), ("viewer", 1), ("day", 1)], unique=True)
+    await db.views.create_index("created_at", expireAfterSeconds=3 * 24 * 3600)
 
     # Seed admin
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@dezi.ru")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin12345")
+    # Админ создаётся только если заданы ADMIN_EMAIL и ADMIN_PASSWORD.
+    # Пароль из окружения — источник истины: смена ADMIN_PASSWORD меняет пароль при старте.
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    if not admin_email or not admin_password:
+        logger.warning("ADMIN_EMAIL/ADMIN_PASSWORD не заданы — администратор не создаётся.")
+        return
+    if len(admin_password) < 10:
+        logger.error("ADMIN_PASSWORD короче 10 символов — администратор не создаётся/не обновляется.")
+        return
     existing = await db.users.find_one({"email": admin_email})
-    if not existing:
+    if existing:
+        if not verify_password(admin_password, existing.get("password_hash", "")):
+            await db.users.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"password_hash": hash_password(admin_password), "role": "admin"}},
+            )
+            logger.info("Пароль администратора обновлён из ADMIN_PASSWORD.")
+    else:
         await db.users.insert_one({
             "email": admin_email,
+            "username": await unique_username("admin-pixvault"),
             "name": "Администратор",
             "password_hash": hash_password(admin_password),
             "role": "admin",

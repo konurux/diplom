@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Heart, Bookmark, ExternalLink, Star } from "lucide-react";
+import { Heart, Bookmark, ExternalLink, Star } from "@/components/icons";
 import { toast } from "sonner";
-import { fileUrl, api, formatApiErrorDetail } from "../lib/api";
+import { fileUrl, fileSrcSet, api, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 
 const PLACEHOLDERS = [
@@ -17,7 +17,9 @@ export default function ProductCard({ design, onChange }) {
   const [saved, setSaved] = useState(!!design.saved_by_me);
   const [likeCount, setLikeCount] = useState(design.likes_count || 0);
 
-  const cover = design.images && design.images.length > 0 ? fileUrl(design.images[0]) : PLACEHOLDERS[design.id?.charCodeAt(0) % 2 || 0];
+  const hasImage = design.images && design.images.length > 0;
+  const cover = hasImage ? fileUrl(design.images[0], 640) : PLACEHOLDERS[design.id?.charCodeAt(0) % 2 || 0];
+  const coverSrcSet = hasImage ? fileSrcSet(design.images[0]) : undefined;
 
   const requireAuth = () => {
     if (!user || user === false) {
@@ -73,9 +75,12 @@ export default function ProductCard({ design, onChange }) {
       <div className="relative overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         <img
           src={cover}
+          srcSet={coverSrcSet}
+          sizes="(min-width: 1280px) 20vw, (min-width: 640px) 33vw, 100vw"
           alt={design.title}
           className="card-img w-full h-auto object-cover"
           loading="lazy"
+          decoding="async"
           onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
         />
         
@@ -89,7 +94,7 @@ export default function ProductCard({ design, onChange }) {
             aria-label="Сохранить"
             className="w-8 h-8 grid place-items-center rounded-full glass-light hover:bg-white dark:hover:bg-black transition-colors opacity-0 group-hover/card:opacity-100"
           >
-            <Bookmark className={`w-3.5 h-3.5 ${saved ? "fill-current text-orange-500" : ""}`} />
+            <Bookmark className={`w-3.5 h-3.5 ${saved ? "fill-current text-brand" : ""}`} />
           </button>
         </div>
 
@@ -113,15 +118,10 @@ export default function ProductCard({ design, onChange }) {
           </button>
         </div>
 
-        <div className="absolute top-2 left-2">
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${design.is_free ? "bg-emerald-500 text-white" : "bg-white text-black"}`}>
-            {design.is_free ? "Бесплатно" : `${Number(design.price).toFixed(0)} ₽`}
-          </span>
-        </div>
       </div>
 
       <div className="p-3">
-        <h3 className="font-display font-semibold text-sm truncate group-hover/card:text-orange-500 transition-colors">
+        <h3 className="font-display font-semibold text-sm truncate group-hover/card:text-brand transition-colors">
           {design.title}
         </h3>
         <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">

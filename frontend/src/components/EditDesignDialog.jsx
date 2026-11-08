@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { X, Image as ImageIcon, Link2, Check } from "lucide-react";
+import { X, Image as ImageIcon, Link2, Check } from "@/components/icons";
 import { api, fileUrl, formatApiErrorDetail } from "../lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { CATEGORIES, STYLES } from "./Sidebar";
 
@@ -28,8 +27,6 @@ export default function EditDesignDialog({ open, onClose, design, onSaved, admin
         category: design.category || "ui-kit",
         styles,
         external_url: design.external_url || "",
-        price: design.price || 0,
-        is_free: design.is_free !== false,
         tags: (design.tags || []).join(", "),
         status: design.status || "pending",
       });
@@ -75,8 +72,6 @@ export default function EditDesignDialog({ open, onClose, design, onSaved, admin
         category: form.category,
         styles: form.styles,
         external_url: form.external_url,
-        price: form.is_free ? 0 : parseFloat(form.price) || 0,
-        is_free: form.is_free,
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         images,
       };
@@ -104,7 +99,7 @@ export default function EditDesignDialog({ open, onClose, design, onSaved, admin
             <div className="mt-2 grid grid-cols-4 gap-3">
               {images.map((img, i) => (
                 <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 group">
-                  <img src={fileUrl(img)} alt="" className="w-full h-full object-cover" />
+                  <img src={fileUrl(img, 320)} alt="" className="w-full h-full object-cover" />
                   <button
                     onClick={() => setImages(images.filter((_, idx) => idx !== i))}
                     className="absolute top-1 right-1 w-6 h-6 grid place-items-center rounded-full bg-black/70 text-white opacity-0 group-hover:opacity-100"
@@ -177,16 +172,6 @@ export default function EditDesignDialog({ open, onClose, design, onSaved, admin
             <Label>Теги</Label>
             <Input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="mt-1.5 rounded-xl" />
           </div>
-          <div className="flex items-center justify-between p-3 rounded-xl bg-neutral-100 dark:bg-neutral-900">
-            <div className="text-sm font-medium">Бесплатный</div>
-            <Switch checked={form.is_free} onCheckedChange={(v) => setForm({ ...form, is_free: v })} data-testid="edit-isfree-switch" />
-          </div>
-          {!form.is_free && (
-            <div>
-              <Label>Цена, ₽</Label>
-              <Input type="number" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="mt-1.5 rounded-xl max-w-[200px]" />
-            </div>
-          )}
           {adminMode && (
             <div>
               <Label>Статус</Label>

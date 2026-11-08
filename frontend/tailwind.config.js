@@ -12,7 +12,36 @@ module.exports = {
   			md: 'calc(var(--radius) - 2px)',
   			sm: 'calc(var(--radius) - 4px)'
   		},
+  		fontFamily: {
+  			sans: ['Inter', 'system-ui', 'sans-serif'],
+  			display: ['"Inter Tight"', 'Inter', 'system-ui', 'sans-serif'],
+  		},
   		colors: {
+  			/* Нейтральная шкала «Studio»: холодный графит с лёгким фиолетовым подтоном.
+  			   Подменяет стандартный neutral-*, поэтому весь интерфейс берёт эти оттенки. */
+  			neutral: {
+  				50: '#F7F7F9',
+  				100: '#EFEFF3',
+  				200: '#E4E4EA',
+  				300: '#CFCFD8',
+  				400: '#9C9CAA',
+  				500: '#6E6E7C',
+  				600: '#52525E',
+  				700: '#3A3A44',
+  				800: '#25252D',
+  				900: '#17171C',
+  				950: '#0E0E12',
+  			},
+  			brand: {
+  				DEFAULT: 'hsl(var(--brand))',
+  				foreground: 'hsl(var(--brand-foreground))',
+  				soft: 'hsl(var(--brand-soft))',
+  				2: 'hsl(var(--brand-2))',
+  			},
+  			lime: {
+  				DEFAULT: 'hsl(var(--lime))',
+  				foreground: 'hsl(var(--lime-foreground))',
+  			},
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			card: {

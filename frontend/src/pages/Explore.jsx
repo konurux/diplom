@@ -1,21 +1,32 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import ProductCard from "../components/ProductCard";
-import { api } from "../lib/api";
+import Masonry from "../components/Masonry";
+import useInfiniteDesigns from "../hooks/useInfiniteDesigns";
 import { Button } from "../components/ui/button";
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
 
 export default function Explore() {
   const [params, setParams] = useSearchParams();
   const [filters, setFilters] = useState({
     category: params.get("category") || "all",
     style: params.get("style") || "all",
-    price: params.get("price") || "all",
     sort: params.get("sort") || "popular",
   });
   const q = params.get("q") || "";
-  const [designs, setDesigns] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const query = useMemo(
+    () => ({ q: q || undefined, category: filters.category, style: filters.style, sort: filters.sort }),
+    [q, filters]
+  );
+  const { items: designs, total, loading, loadingMore, hasMore, sentinelRef } = useInfiniteDesigns(query);
+  const count = total ?? designs.length;
 
   useEffect(() => {
     const next = new URLSearchParams(params);
@@ -27,35 +38,15 @@ export default function Explore() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const { data } = await api.get("/designs", {
-          params: {
-            q: q || undefined,
-            category: filters.category,
-            style: filters.style,
-            price: filters.price,
-            sort: filters.sort,
-            limit: 80,
-          },
-        });
-        setDesigns(data);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [q, filters]);
 
   return (
     <div className="max-w-[1440px] mx-auto px-6 md:px-8 py-10 md:py-14" data-testid="explore-page">
       <div className="mb-8">
         <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight" data-testid="explore-title">
-          {q ? `Результаты по «${q}»` : "Каталог дизайнов"}
+          {q ? `Результаты по «${q}»` : "Галерея вдохновения"}
         </h1>
         <p className="mt-2 text-neutral-500 dark:text-neutral-400">
-          {designs.length} {designs.length === 1 ? "дизайн" : "дизайнов"} найдено
+          {loading ? "Загрузка…" : `${count} ${plural(count, "работа", "работы", "работ")}`}
         </p>
       </div>
 
@@ -73,11 +64,13 @@ export default function Explore() {
               <Link to="/upload"><Button className="mt-6 rounded-full">Опубликовать первый дизайн</Button></Link>
             </div>
           ) : (
-            <div className="masonry">
-              {designs.map((d) => (
-                <ProductCard key={d.id} design={d} />
-              ))}
-            </div>
+            <>
+              <Masonry items={designs} renderItem={(d) => <ProductCard design={d} />} />
+              <div ref={sentinelRef} aria-hidden="true" />
+              <div className="py-10 text-center text-sm text-neutral-500" data-testid="list-footer">
+                {loadingMore ? "Загружаем ещё…" : !hasMore && designs.length > 12 ? "Вы посмотрели всё — загляните позже за новыми работами" : null}
+              </div>
+            </>
           )}
         </div>
       </div>

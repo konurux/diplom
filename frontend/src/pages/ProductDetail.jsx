@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Heart, Bookmark, ExternalLink, Star, Tag, Edit3, Trash2, MessageCircle } from "lucide-react";
+import { Heart, Bookmark, ExternalLink, Star, Tag, Edit3, Trash2, MessageCircle } from "@/components/icons";
 import { toast } from "sonner";
 import { api, fileUrl, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Textarea } from "../components/ui/textarea";
 import ProductCard from "../components/ProductCard";
+import Masonry from "../components/Masonry";
 import EditDesignDialog from "../components/EditDesignDialog";
 import { STYLES } from "../components/Sidebar";
 
@@ -56,7 +57,7 @@ export default function ProductDetail() {
   if (!design) return <div className="text-center py-32">Не найдено</div>;
 
   const canEdit = user && user !== false && (user.id === design.author?.id || user.role === "admin" || user.role === "moderator");
-  const cover = design.images.length ? fileUrl(design.images[activeImg]) : "https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=1200";
+  const cover = design.images.length ? fileUrl(design.images[activeImg], 1280) : "https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?w=1200";
 
   const handleLike = async () => {
     if (!user || user === false) { navigate("/login"); return; }
@@ -112,7 +113,7 @@ export default function ProductDetail() {
                   data-testid={`thumbnail-${i}`}
                   className={`rounded-2xl overflow-hidden border-2 transition-all ${i === activeImg ? "border-neutral-900 dark:border-white" : "border-transparent"}`}
                 >
-                  <img src={fileUrl(img)} alt="" className="w-full aspect-square object-cover" />
+                  <img src={fileUrl(img, 320)} alt="" loading="lazy" className="w-full aspect-square object-cover" />
                 </button>
               ))}
             </div>
@@ -131,13 +132,17 @@ export default function ProductDetail() {
             <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight" data-testid="design-title">{design.title}</h1>
             <div className="mt-3 flex items-center gap-3">
               <Avatar className="w-10 h-10">
-                <AvatarImage src={design.author?.avatar_url || undefined} />
+                <AvatarImage src={design.author?.avatar_url ? fileUrl(design.author.avatar_url, 320) : undefined} />
                 <AvatarFallback className="bg-neutral-900 text-white dark:bg-white dark:text-black">
                   {(design.author?.name || "?").slice(0, 1)}
                 </AvatarFallback>
               </Avatar>
               <div>
-                <div className="font-medium text-sm" data-testid="author-name">{design.author?.name}</div>
+                {design.author?.id ? (
+                  <Link to={`/u/${design.author.username || design.author.id}`} className="font-medium text-sm hover:text-brand transition-colors" data-testid="author-name">{design.author?.name}</Link>
+                ) : (
+                  <div className="font-medium text-sm" data-testid="author-name">{design.author?.name}</div>
+                )}
                 <div className="text-xs text-neutral-500 capitalize">{design.author?.role === "admin" ? "Администратор" : design.author?.role === "moderator" ? "Модератор" : "Автор"}</div>
               </div>
             </div>
@@ -151,14 +156,6 @@ export default function ProductDetail() {
             )}
           </div>
 
-          <div className="flex items-baseline gap-2">
-            {design.is_free ? (
-              <span className="font-display text-3xl font-bold text-emerald-500">Бесплатно</span>
-            ) : (
-              <span className="font-display text-3xl font-bold">{Number(design.price).toFixed(0)} ₽</span>
-            )}
-          </div>
-
           <div className="flex flex-col gap-2">
             <Button onClick={handleView} className="h-12 rounded-full text-base gap-2" data-testid="view-cta">
               <ExternalLink className="w-5 h-5" /> Перейти к дизайну
@@ -168,7 +165,7 @@ export default function ProductDetail() {
                 <Heart className={`w-4 h-4 ${design.liked_by_me ? "fill-red-500 text-red-500" : ""}`} /> Лайк
               </Button>
               <Button onClick={handleSave} variant="outline" className="flex-1 h-11 rounded-full gap-2" data-testid="save-cta">
-                <Bookmark className={`w-4 h-4 ${design.saved_by_me ? "fill-orange-500 text-orange-500" : ""}`} /> Сохранить
+                <Bookmark className={`w-4 h-4 ${design.saved_by_me ? "fill-brand text-brand" : ""}`} /> Сохранить
               </Button>
             </div>
             {canEdit && (
@@ -195,7 +192,7 @@ export default function ProductDetail() {
                 href={design.external_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm font-medium text-orange-500 hover:underline break-all"
+                className="text-sm font-medium text-brand hover:underline break-all"
                 data-testid="external-source-link"
               >
                 {design.external_url}
@@ -239,7 +236,7 @@ export default function ProductDetail() {
         {user && user !== false ? (
           <form onSubmit={handleComment} className="mb-6 flex gap-3" data-testid="comment-form">
             <Avatar className="w-10 h-10 shrink-0">
-              <AvatarImage src={user.avatar_url || undefined} />
+              <AvatarImage src={user.avatar_url ? fileUrl(user.avatar_url, 320) : undefined} />
               <AvatarFallback className="bg-neutral-900 text-white dark:bg-white dark:text-black">{user.name?.[0]}</AvatarFallback>
             </Avatar>
             <div className="flex-1 flex flex-col gap-2">
@@ -265,7 +262,7 @@ export default function ProductDetail() {
           {comments.map((c) => (
             <div key={c.id} className="flex gap-3" data-testid={`comment-${c.id}`}>
               <Avatar className="w-10 h-10 shrink-0">
-                <AvatarImage src={c.author?.avatar_url || undefined} />
+                <AvatarImage src={c.author?.avatar_url ? fileUrl(c.author.avatar_url, 320) : undefined} />
                 <AvatarFallback className="bg-neutral-200 dark:bg-neutral-800">{c.author?.name?.[0] || "?"}</AvatarFallback>
               </Avatar>
               <div className="flex-1 bg-neutral-100 dark:bg-neutral-900 rounded-2xl p-4">
@@ -287,9 +284,7 @@ export default function ProductDetail() {
       {related.length > 0 && (
         <section className="mt-16" data-testid="related-section">
           <h2 className="font-display text-2xl font-bold mb-6">Похожие дизайны</h2>
-          <div className="masonry">
-            {related.map((d) => <ProductCard key={d.id} design={d} />)}
-          </div>
+          <Masonry items={related} renderItem={(d) => <ProductCard design={d} />} />
         </section>
       )}
 
