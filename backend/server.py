@@ -26,6 +26,9 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import StreamingResponse
+from gridfs.errors import NoFile
+from PIL import Image, ImageOps
+from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from pymongo.errors import DuplicateKeyError
@@ -91,6 +94,7 @@ async def cors_and_csrf(request: Request, call_next):
     if allowed:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
         response.headers["Vary"] = "Origin"
     return response
 
@@ -424,22 +428,61 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     })
     return {"path": result["path"], "url": f"/api/files/{result['path']}"}
 
-@api_router.get("/files/{path:path}")
-@api_router.get("/files/{path:path}")
-async def get_file(path: str):
+# Превью: /api/files/<path>?w=640 — уменьшенная WebP-копия, создаётся при первом запросе
+THUMB_WIDTHS = (320, 640, 1280)
+FILE_CACHE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+Image.MAX_IMAGE_PIXELS = 40_000_000  # защита от «бомб» распаковки
+
+
+async def read_gridfs(name: str):
     fs = AsyncIOMotorGridFSBucket(db)
     try:
-        grid_out = await fs.open_download_stream_by_name(path)
-        data = await grid_out.read()
-        
-        # Добавляем fallback: если в БД нет contentType, по умолчанию считаем, что это image/jpeg
-        ctype = "image/jpeg"
-        if grid_out.metadata and "contentType" in grid_out.metadata:
-            ctype = grid_out.metadata["contentType"]
-            
-        return Response(content=data, media_type=ctype)
-    except Exception:
+        grid_out = await fs.open_download_stream_by_name(name)
+    except NoFile:
+        return None
+    data = await grid_out.read()
+    ctype = (grid_out.metadata or {}).get("contentType", "image/jpeg")
+    return data, ctype
+
+
+def make_thumbnail(data: bytes, width: int) -> Optional[bytes]:
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if getattr(im, "is_animated", False):
+                return None  # анимированные GIF отдаём как есть
+            im = ImageOps.exif_transpose(im)
+            im = im.convert("RGBA" if im.mode in ("RGBA", "LA", "P") else "RGB")
+            if im.width > width:
+                im.thumbnail((width, width * 4), Image.LANCZOS)
+            out = io.BytesIO()
+            im.save(out, format="WEBP", quality=80, method=4)
+            return out.getvalue()
+    except Exception as e:  # битый файл, слишком большой и т.п.
+        logger.warning("Не удалось сделать превью: %s", e)
+        return None
+
+
+@api_router.get("/files/{path:path}")
+async def get_file(path: str, w: Optional[int] = Query(None)):
+    if w is not None:
+        width = min(THUMB_WIDTHS, key=lambda t: abs(t - w))  # только фиксированные размеры
+        thumb_name = f"{path}@w{width}.webp"
+        cached = await read_gridfs(thumb_name)
+        if cached:
+            return Response(content=cached[0], media_type="image/webp", headers=FILE_CACHE_HEADERS)
+        original = await read_gridfs(path)
+        if not original:
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        thumb = await run_in_threadpool(make_thumbnail, original[0], width)
+        if thumb is None:
+            return Response(content=original[0], media_type=original[1], headers=FILE_CACHE_HEADERS)
+        await put_object(thumb_name, thumb, "image/webp")
+        return Response(content=thumb, media_type="image/webp", headers=FILE_CACHE_HEADERS)
+
+    found = await read_gridfs(path)
+    if not found:
         raise HTTPException(status_code=404, detail="Файл не найден")
+    return Response(content=found[0], media_type=found[1], headers=FILE_CACHE_HEADERS)
 
 # ---------- Designs ----------
 @api_router.post("/designs")
@@ -471,6 +514,7 @@ async def create_design(body: DesignCreate, user: dict = Depends(get_current_use
 @api_router.get("/designs")
 async def list_designs(
     request: Request,
+    response: Response,
     q: Optional[str] = None,
     category: Optional[str] = None,
     style: Optional[str] = None,
@@ -515,7 +559,9 @@ async def list_designs(
         "downloads": [("views_count", -1)],  # старый ключ сортировки
     }
     sort_spec = sort_map.get(sort, sort_map["popular"])
-    cursor = db.designs.find(query).sort(sort_spec).skip(skip).limit(min(limit, 100))
+    response.headers["X-Total-Count"] = str(await db.designs.count_documents(query))
+    # стабильный порядок для постраничной подгрузки (без дублей между страницами)
+    cursor = db.designs.find(query).sort(sort_spec + [("_id", -1)]).skip(max(skip, 0)).limit(max(1, min(limit, 100)))
     designs = []
     async for d in cursor:
         designs.append(await serialize_design(d, current))

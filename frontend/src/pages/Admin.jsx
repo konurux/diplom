@@ -98,7 +98,7 @@ export default function Admin() {
         {list.map((d) => (
           <div key={d.id} className="flex flex-col sm:flex-row gap-4 items-start sm:items-center p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800" data-testid={`admin-design-${d.id}`}>
             <img
-              src={d.images?.[0] ? fileUrl(d.images[0]) : "https://via.placeholder.com/100"}
+              src={d.images?.[0] ? fileUrl(d.images[0], 320) : "https://via.placeholder.com/100"}
               alt=""
               className="w-24 h-24 object-cover rounded-xl bg-neutral-100 dark:bg-neutral-800 shrink-0"
             />
@@ -190,7 +190,7 @@ export default function Admin() {
               {users.map((u) => (
                 <div key={u.id} className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800" data-testid={`admin-user-${u.id}`}>
                   <Avatar className="w-12 h-12">
-                    <AvatarImage src={u.avatar_url ? fileUrl(u.avatar_url) : undefined} />
+                    <AvatarImage src={u.avatar_url ? fileUrl(u.avatar_url, 320) : undefined} />
                     <AvatarFallback>{u.name?.[0]?.toUpperCase()}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">

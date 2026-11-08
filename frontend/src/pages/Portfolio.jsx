@@ -1,31 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Heart, Eye, LayoutGrid, Link2 } from "@/components/icons";
 import { toast } from "sonner";
 import { api, fileUrl } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import ProductCard from "../components/ProductCard";
+import Masonry from "../components/Masonry";
+import useInfiniteDesigns from "../hooks/useInfiniteDesigns";
 import { Button } from "../components/ui/button";
 
 export default function Portfolio() {
   const { id } = useParams();
   const { user } = useAuth();
   const [author, setAuthor] = useState(null);
-  const [works, setWorks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const worksQuery = useMemo(() => ({ author_id: id, sort: "newest" }), [id]);
+  const { items: works, loadingMore, sentinelRef } = useInfiniteDesigns(worksQuery, { enabled: !!author && author.id === id });
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       setNotFound(false);
+      setAuthor(null);
       try {
-        const [a, w] = await Promise.all([
-          api.get(`/users/${id}`),
-          api.get("/designs", { params: { author_id: id, sort: "newest", limit: 100 } }),
-        ]);
+        const a = await api.get(`/users/${id}`);
         setAuthor(a.data);
-        setWorks(w.data);
       } catch {
         setNotFound(true);
       } finally {
@@ -61,7 +61,7 @@ export default function Portfolio() {
     <div className="max-w-[1440px] mx-auto px-6 md:px-8 py-10 md:py-14" data-testid="portfolio-page">
       <div className="flex flex-col items-center text-center mb-12">
         {author.avatar_url ? (
-          <img src={fileUrl(author.avatar_url)} alt={author.name} className="w-28 h-28 rounded-full object-cover" />
+          <img src={fileUrl(author.avatar_url, 320)} alt={author.name} className="w-28 h-28 rounded-full object-cover" />
         ) : (
           <div className="w-28 h-28 rounded-full bg-gradient-to-br from-brand to-brand-2 grid place-items-center text-white font-display font-bold text-4xl">
             {initial}
@@ -88,9 +88,11 @@ export default function Portfolio() {
           <p className="mt-2 text-neutral-500">Работы появятся здесь после модерации.</p>
         </div>
       ) : (
-        <div className="masonry">
-          {works.map((d) => <ProductCard key={d.id} design={d} />)}
-        </div>
+        <>
+          <Masonry items={works} renderItem={(d) => <ProductCard design={d} />} />
+          <div ref={sentinelRef} aria-hidden="true" />
+          {loadingMore && <div className="py-10 text-center text-sm text-neutral-500">Загружаем ещё…</div>}
+        </>
       )}
     </div>
   );

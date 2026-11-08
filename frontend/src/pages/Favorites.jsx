@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Bookmark } from "@/components/icons";
 import { api } from "../lib/api";
 import ProductCard from "../components/ProductCard";
+import Masonry from "../components/Masonry";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "../components/ui/button";
 
@@ -52,9 +53,7 @@ export default function Favorites() {
           <Link to="/explore"><Button className="mt-6 rounded-full">Открыть галерею</Button></Link>
         </div>
       ) : (
-        <div className="masonry">
-          {items.map((d) => <ProductCard key={d.id} design={d} onChange={refresh} />)}
-        </div>
+        <Masonry items={items} renderItem={(d) => <ProductCard design={d} onChange={refresh} />} />
       )}
     </div>
   );

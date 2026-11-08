@@ -127,22 +127,6 @@ body {
     .scroll-hide { -ms-overflow-style: none; scrollbar-width: none; }
 }
 
-/* Masonry */
-.masonry {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-}
-.masonry > * {
-    flex: 1 1 calc(25% - 1rem);
-    min-width: 250px;
-}
-
-@media (min-width: 640px) { .masonry { column-count: 3; } }
-@media (min-width: 1024px) { .masonry { column-count: 4; } }
-@media (min-width: 1280px) { .masonry { column-count: 5; } }
-@media (min-width: 1600px) { .masonry { column-count: 6; } }
-
 /* Hero blob */
 .hero-blob {
     background: radial-gradient(circle at 30% 30%, hsl(var(--brand) / 0.55), transparent 60%),

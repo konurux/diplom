@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Heart, Bookmark, ExternalLink, Star } from "@/components/icons";
 import { toast } from "sonner";
-import { fileUrl, api, formatApiErrorDetail } from "../lib/api";
+import { fileUrl, fileSrcSet, api, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 
 const PLACEHOLDERS = [
@@ -17,7 +17,9 @@ export default function ProductCard({ design, onChange }) {
   const [saved, setSaved] = useState(!!design.saved_by_me);
   const [likeCount, setLikeCount] = useState(design.likes_count || 0);
 
-  const cover = design.images && design.images.length > 0 ? fileUrl(design.images[0]) : PLACEHOLDERS[design.id?.charCodeAt(0) % 2 || 0];
+  const hasImage = design.images && design.images.length > 0;
+  const cover = hasImage ? fileUrl(design.images[0], 640) : PLACEHOLDERS[design.id?.charCodeAt(0) % 2 || 0];
+  const coverSrcSet = hasImage ? fileSrcSet(design.images[0]) : undefined;
 
   const requireAuth = () => {
     if (!user || user === false) {
@@ -73,9 +75,12 @@ export default function ProductCard({ design, onChange }) {
       <div className="relative overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         <img
           src={cover}
+          srcSet={coverSrcSet}
+          sizes="(min-width: 1280px) 20vw, (min-width: 640px) 33vw, 100vw"
           alt={design.title}
           className="card-img w-full h-auto object-cover"
           loading="lazy"
+          decoding="async"
           onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
         />
         

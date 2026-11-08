@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Search, ArrowRight, Eye, Bookmark, FolderOpen } from "@/components/icons";
 import { api } from "../lib/api";
 import ProductCard from "../components/ProductCard";
+import Masonry from "../components/Masonry";
 import { Button } from "../components/ui/button";
 import { CATEGORIES } from "../components/Sidebar";
 
@@ -139,11 +140,7 @@ export default function Home() {
               </Button>
             </Link>
           </div>
-          <div className="masonry">
-            {trending.map((d) => (
-              <ProductCard key={d.id} design={d} />
-            ))}
-          </div>
+          <Masonry items={trending} renderItem={(d) => <ProductCard design={d} />} />
         </section>
       )}
 
@@ -172,11 +169,7 @@ export default function Home() {
             </Link>
           </div>
         ) : (
-          <div className="masonry">
-            {designs.map((d) => (
-              <ProductCard key={d.id} design={d} />
-            ))}
-          </div>
+          <Masonry items={designs} renderItem={(d) => <ProductCard design={d} />} />
         )}
       </section>
     </div>

@@ -319,6 +319,40 @@ class TestInteractions:
         assert r.status_code == 200
 
 
+# -------- Images & pagination ----------
+class TestImagesAndPaging:
+    def test_thumbnail_webp_and_cache(self, admin):
+        from PIL import Image
+        s, _ = admin
+        buf = io.BytesIO()
+        Image.new("RGB", (2000, 1000), (91, 75, 255)).save(buf, "PNG")
+        buf.seek(0)
+        r = s.post(f"{API}/upload", files={"file": ("big.png", buf, "image/png")}, timeout=20)
+        assert r.status_code == 200
+        path = r.json()["path"]
+        r = requests.get(f"{API}/files/{path}", params={"w": 640}, timeout=20)
+        assert r.status_code == 200
+        assert r.headers["Content-Type"] == "image/webp"
+        assert "immutable" in r.headers.get("Cache-Control", "")
+        im = Image.open(io.BytesIO(r.content))
+        assert im.size == (640, 320)
+        # произвольная ширина приводится к разрешённой
+        r2 = requests.get(f"{API}/files/{path}", params={"w": 5000}, timeout=20)
+        assert Image.open(io.BytesIO(r2.content)).size == (1280, 640)
+
+    def test_missing_file_404(self):
+        assert requests.get(f"{API}/files/nope/missing.png", params={"w": 320}, timeout=10).status_code == 404
+
+    def test_pagination_total_and_no_overlap(self):
+        r1 = requests.get(f"{API}/designs", params={"sort": "newest", "limit": 2, "skip": 0}, timeout=10)
+        r2 = requests.get(f"{API}/designs", params={"sort": "newest", "limit": 2, "skip": 2}, timeout=10)
+        total = int(r1.headers["X-Total-Count"])
+        ids1 = {d["id"] for d in r1.json()}
+        ids2 = {d["id"] for d in r2.json()}
+        assert len(ids1) == min(2, total)
+        assert not ids1 & ids2
+
+
 # -------- Purchases removed / Security ----------
 class TestRemovedAndSecurity:
     def test_purchase_endpoints_removed(self, user_account):

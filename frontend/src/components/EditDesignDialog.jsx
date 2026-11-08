@@ -99,7 +99,7 @@ export default function EditDesignDialog({ open, onClose, design, onSaved, admin
             <div className="mt-2 grid grid-cols-4 gap-3">
               {images.map((img, i) => (
                 <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 group">
-                  <img src={fileUrl(img)} alt="" className="w-full h-full object-cover" />
+                  <img src={fileUrl(img, 320)} alt="" className="w-full h-full object-cover" />
                   <button
                     onClick={() => setImages(images.filter((_, idx) => idx !== i))}
                     className="absolute top-1 right-1 w-6 h-6 grid place-items-center rounded-full bg-black/70 text-white opacity-0 group-hover:opacity-100"

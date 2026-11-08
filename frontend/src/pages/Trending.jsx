@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ProductCard from "../components/ProductCard";
+import Masonry from "../components/Masonry";
 import { Flame } from "@/components/icons";
 
 export default function Trending() {
@@ -37,9 +38,7 @@ export default function Trending() {
           <p className="mt-2 text-neutral-500">Когда появятся первые публикации — они окажутся здесь.</p>
         </div>
       ) : (
-        <div className="masonry">
-          {designs.map((d) => <ProductCard key={d.id} design={d} />)}
-        </div>
+        <Masonry items={designs} renderItem={(d) => <ProductCard design={d} />} />
       )}
     </div>
   );

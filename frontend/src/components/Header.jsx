@@ -108,7 +108,7 @@ export default function Header() {
                 <DropdownMenuTrigger asChild>
                   <button data-testid="user-avatar-button" className="rounded-full focus:outline-none focus:ring-2 ring-neutral-300 dark:ring-neutral-700">
                     <Avatar className="w-10 h-10">
-                      <AvatarImage src={user.avatar_url ? fileUrl(user.avatar_url) : undefined} alt={user.name} />
+                      <AvatarImage src={user.avatar_url ? fileUrl(user.avatar_url, 320) : undefined} alt={user.name} />
                       <AvatarFallback className="bg-neutral-900 text-white dark:bg-white dark:text-black text-sm font-semibold">
                         {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
                       </AvatarFallback>

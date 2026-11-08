@@ -110,7 +110,7 @@ export default function UploadDesign() {
           <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 gap-3">
             {images.map((img, i) => (
               <div key={i} className="relative aspect-square rounded-2xl overflow-hidden bg-neutral-100 dark:bg-neutral-900 group">
-                <img src={fileUrl(img)} alt="" className="w-full h-full object-cover" />
+                <img src={fileUrl(img, 320)} alt="" className="w-full h-full object-cover" />
                 <button
                   type="button"
                   onClick={() => removeImage(i)}

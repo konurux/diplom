@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api, fileUrl, formatApiErrorDetail } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import ProductCard from "../components/ProductCard";
+import Masonry from "../components/Masonry";
 import EditDesignDialog from "../components/EditDesignDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Button } from "../components/ui/button";
@@ -22,7 +23,7 @@ const STATUS_LABEL = {
 function Avatar({ user, size = "w-24 h-24 text-3xl" }) {
   const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
   return user?.avatar_url ? (
-    <img src={fileUrl(user.avatar_url)} alt={user.name} className={`${size} rounded-full object-cover`} />
+    <img src={fileUrl(user.avatar_url, 320)} alt={user.name} className={`${size} rounded-full object-cover`} />
   ) : (
     <div className={`${size} rounded-full bg-gradient-to-br from-brand to-brand-2 grid place-items-center text-white font-display font-bold`}>
       {initial}
@@ -174,13 +175,14 @@ export default function Profile() {
               action={<Link to="/upload"><Button className="mt-6 rounded-full">Добавить работу</Button></Link>}
             />
           ) : (
-            <div className="masonry">
-              {works.map((d) => {
+            <Masonry
+              items={works}
+              renderItem={(d) => {
                 const st = STATUS_LABEL[d.status] || STATUS_LABEL.pending;
                 return (
-                  <div key={d.id} className="relative">
+                  <div className="relative">
                     <ProductCard design={d} onChange={() => load(user.id)} />
-                    <div className="mt-2 mb-4 flex items-center justify-between gap-2">
+                    <div className="mt-2 flex items-center justify-between gap-2">
                       <Badge variant={st.variant} className="rounded-full">{st.text}</Badge>
                       <div className="flex gap-1">
                         <Button size="sm" variant="ghost" onClick={() => setEditTarget(d)} data-testid={`profile-edit-${d.id}`}>
@@ -193,8 +195,8 @@ export default function Profile() {
                     </div>
                   </div>
                 );
-              })}
-            </div>
+              }}
+            />
           )}
         </TabsContent>
 
@@ -208,9 +210,7 @@ export default function Profile() {
               action={<Link to="/explore"><Button className="mt-6 rounded-full">Открыть галерею</Button></Link>}
             />
           ) : (
-            <div className="masonry">
-              {saved.map((d) => <ProductCard key={d.id} design={d} onChange={() => load(user.id)} />)}
-            </div>
+            <Masonry items={saved} renderItem={(d) => <ProductCard design={d} onChange={() => load(user.id)} />} />
           )}
         </TabsContent>
 
