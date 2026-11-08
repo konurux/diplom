@@ -72,13 +72,14 @@ export default function ProductCard({ design, onChange }) {
       */
       className="group/card block card-hover break-inside-avoid transform-gpu relative overflow-hidden rounded-xl bg-white dark:bg-neutral-900 soft-shadow border border-neutral-100 dark:border-neutral-800"
     >
-      <div className="relative overflow-hidden bg-neutral-100 dark:bg-neutral-800">
+      {/* Единая рамка 4:3: карточки одной высоты независимо от пропорций картинки */}
+      <div className="relative aspect-[4/3] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         <img
           src={cover}
           srcSet={coverSrcSet}
           sizes="(min-width: 1280px) 20vw, (min-width: 640px) 33vw, 100vw"
           alt={design.title}
-          className="card-img w-full h-auto object-cover"
+          className="card-img absolute inset-0 w-full h-full object-cover object-top"
           loading="lazy"
           decoding="async"
           onError={(e) => { e.target.src = PLACEHOLDERS[0]; }}
